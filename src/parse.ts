@@ -175,6 +175,86 @@ interface Found {
   data: any;
 }
 
+/**
+ * Qwen Chat / Open WebUI-style export:
+ * { id, title, created_at, updated_at, chat: { history: { messages: { id: msg }, currentId } } }
+ * Messages form a tree (parentId / childrenIds). We follow the active branch from currentId
+ * back to the root. Assistant output lives in content_list: 'answer' (text),
+ * 'thinking_summary' (reasoning) and 'image_gen' (image URL).
+ */
+function fromOpenWebUI(conv: any): Conversation {
+  const history = conv.chat?.history ?? {};
+  const byId: Record<string, any> = history.messages ?? {};
+
+  const path: any[] = [];
+  const seen = new Set<string>();
+  let cur: string | null | undefined = history.currentId ?? conv.currentId;
+  while (cur && byId[cur] && !seen.has(cur)) {
+    seen.add(cur);
+    path.push(byId[cur]);
+    cur = byId[cur].parentId;
+  }
+  path.reverse();
+  const source: any[] = path.length ? path : Array.isArray(conv.chat?.messages) ? conv.chat.messages : [];
+
+  const messages: Message[] = [];
+  const push = (role: Role, text: string, createdAt?: string) => {
+    if (text.trim()) messages.push({ id: newId('m'), role, text, createdAt });
+  };
+
+  for (const m of source) {
+    if (!m || typeof m !== 'object') continue;
+    const role = normalizeRole(m.role);
+    const when = toIso(m.timestamp);
+    const items: any[] = Array.isArray(m.content_list) ? m.content_list : [];
+
+    if (role === 'user') {
+      const attachments = (m.files ?? []).map((f: any) => {
+        const name = String(f?.name ?? f?.filename ?? 'attachment');
+        const isImage = f?.file_class === 'vision' || String(f?.file_type ?? '').startsWith('image/');
+        if (isImage) return `![${name}](${f?.url ?? encodeURIComponent(name)})`;
+        return `📎 ${name}`;
+      });
+      push('user', [...attachments, extractText(m.content)].filter(Boolean).join('\n\n'), when);
+      continue;
+    }
+
+    if (role === 'assistant') {
+      const thoughts = items
+        .filter((i) => i?.phase === 'thinking_summary')
+        .map((i) => {
+          const title = (i.extra?.summary_title?.content ?? []).join(' ').trim();
+          const thought = (i.extra?.summary_thought?.content ?? []).join('\n\n').trim();
+          const body = typeof i.content === 'string' ? i.content.trim() : '';
+          return [title ? `**${title}**` : '', thought, body].filter(Boolean).join('\n\n');
+        });
+      if (typeof m.reasoning_content === 'string') thoughts.push(m.reasoning_content);
+      push('reasoning', thoughts.filter((t) => t.trim()).join('\n\n'), when);
+
+      const answer =
+        items
+          .filter((i) => i?.phase === 'answer')
+          .map((i) => extractText(i.content))
+          .filter(Boolean)
+          .join('\n\n') || extractText(m.content);
+      const images = items
+        .filter((i) => i?.phase === 'image_gen' && typeof i.content === 'string' && i.content.trim())
+        .map((i) => `![generated image](${i.content.trim()})`);
+      push('assistant', [answer, ...images].filter(Boolean).join('\n\n'), when);
+      continue;
+    }
+
+    push(role, extractText(m.content), when);
+  }
+
+  return {
+    title: typeof conv.title === 'string' ? conv.title : undefined,
+    createdAt: toIso(conv.created_at),
+    updatedAt: toIso(conv.updated_at),
+    messages,
+  };
+}
+
 function looksLikeMessage(x: unknown): boolean {
   if (!x || typeof x !== 'object' || Array.isArray(x)) return false;
   const o = x as Record<string, unknown>;
@@ -192,6 +272,9 @@ function findConversations(data: any, depth = 0): Found[] {
   }
   if (typeof data !== 'object') return [];
   if (data.mapping && typeof data.mapping === 'object') return [{ kind: 'chatgpt', data }];
+  if (data.chat && typeof data.chat === 'object' && (data.chat.history || Array.isArray(data.chat.messages))) {
+    return [{ kind: 'openwebui', data }];
+  }
   if (Array.isArray(data.chat_messages)) return [{ kind: 'claude', data }];
   if (Array.isArray(data.messages)) return [{ kind: 'generic', data }];
   if (Array.isArray(data.conversations)) return findConversations(data.conversations, depth + 1);
@@ -231,7 +314,13 @@ export function parseChatFile(fileName: string, text: string): Chat[] {
 
   return found.map(({ kind, data: raw }) => {
     const conv =
-      kind === 'chatgpt' ? fromChatGPT(raw) : kind === 'claude' ? fromClaude(raw) : fromGeneric(raw);
+      kind === 'chatgpt'
+        ? fromChatGPT(raw)
+        : kind === 'claude'
+          ? fromClaude(raw)
+          : kind === 'openwebui'
+            ? fromOpenWebUI(raw)
+            : fromGeneric(raw);
     const title = conv.title?.trim() || deriveTitle(conv.messages) || `Untitled (${fileName})`;
     const messages = conv.messages;
     return {
