@@ -1,11 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Chat } from './types';
+import type { Chat, LoadedFile, WriteTarget } from './types';
 import { loadFiles } from './loader';
 import { applyDisplay, loadDisplay, saveDisplay, type DisplaySettings } from './display';
 import { AssetsProvider } from './assets';
 import { Sidebar } from './components/Sidebar';
 import { TabBar } from './components/TabBar';
 import { ChatView } from './components/ChatView';
+import {
+  canOpenWithHandles,
+  desktopTarget,
+  handlesFromDrop,
+  pickFilesWithHandles,
+  readTarget,
+  writeTarget,
+} from './fileAccess';
+import { planSave, sameBytes, type PendingEdit } from './save';
 
 const THEME_KEY = 'chat-viewer-theme';
 const SIDEBAR_KEY = 'chat-viewer-sidebar-collapsed';
@@ -58,12 +67,16 @@ export default function App() {
   const [chats, setChats] = useState<Record<string, Chat>>({});
   // Library order (display order is by date, applied below).
   const [order, setOrder] = useState<string[]>([]);
+  // Files the chats came from, keyed by id. Saves start from their bytes.
+  const [files, setFiles] = useState<Record<string, LoadedFile>>({});
   // Image object URLs, keyed by file name (e.g. "image-1.jpg").
   const [assets, setAssets] = useState<Record<string, string>>({});
   // Open tabs, in display order.
   const [tabIds, setTabIds] = useState<string[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
+  const [notices, setNotices] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState('');
   const [dragging, setDragging] = useState(false);
 
@@ -111,8 +124,12 @@ export default function App() {
   }, []);
 
   const addFiles = useCallback(
-    async (files: FileList | File[]) => {
-      const result = await loadFiles(Array.from(files));
+    async (fileList: FileList | File[], targets?: (WriteTarget | undefined)[]) => {
+      const list = Array.from(fileList);
+      const targetMap = new Map<File, WriteTarget | undefined>();
+      // In the desktop app the real path is the target (it gets a .bak copy); otherwise use the browser handle.
+      list.forEach((f, i) => targetMap.set(f, desktopTarget(f) ?? targets?.[i]));
+      const result = await loadFiles(list, targetMap);
       const newErrors = [...result.errors];
 
       const newAssets: Record<string, string> = {};
@@ -121,6 +138,14 @@ export default function App() {
       }
       if (Object.keys(newAssets).length) {
         setAssets((prev) => ({ ...prev, ...newAssets }));
+      }
+
+      if (result.files.length) {
+        setFiles((prev) => {
+          const next = { ...prev };
+          for (const f of result.files) next[f.id] = f;
+          return next;
+        });
       }
 
       const loaded = result.chats;
@@ -158,6 +183,79 @@ export default function App() {
     });
   };
 
+  /**
+   * Write the edited chat(s) back to their file. Every dirty chat from the same file is saved
+   * together, because they share the file's bytes.
+   */
+  const saveChat = async (id: string) => {
+    const chat = chats[id];
+    const file = chat?.origin ? files[chat.origin.fileId] : undefined;
+    if (!chat || !file) return;
+    if (!file.target) {
+      setErrors((prev) => [...prev, `"${file.name}" can only be exported, not saved. Use Open files in Chrome or Edge, or the desktop app.`]);
+      return;
+    }
+    const pending = Object.values(chats).filter((c) => c.dirty && c.origin?.fileId === file.id);
+    const saveable = pending.filter((c) => !c.writeBlocked);
+    const blocked = pending.filter((c) => c.writeBlocked);
+    if (saveable.length === 0) {
+      setErrors((prev) => [...prev, ...blocked.map((c) => `"${c.title}" can't be saved: ${c.writeBlocked}`)]);
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const current = await readTarget(file.target);
+      if (!sameBytes(current, file.bytes)) {
+        throw new Error(`"${file.name}" changed on disk since it was opened. Reopen it, then save again.`);
+      }
+      const edits: PendingEdit[] = saveable.map((c) => ({
+        chat: c,
+        edit: {
+          title: c.title,
+          originalTitle: c.original.title,
+          original: c.original.messages,
+          edited: c.messages,
+        },
+      }));
+      const plan = await planSave(file, edits);
+      const backup = await writeTarget(file.target, plan.bytes);
+
+      setFiles((prev) => ({ ...prev, [file.id]: { ...file, bytes: plan.bytes } }));
+      setChats((prev) => {
+        const next = { ...prev };
+        for (const u of plan.updates) {
+          const cur = next[u.chatId];
+          if (!cur) continue;
+          next[u.chatId] = {
+            ...u.chat,
+            id: cur.id,
+            origin: cur.origin,
+            writeBlocked: cur.writeBlocked,
+            dirty: false,
+          };
+        }
+        return next;
+      });
+
+      const mismatched = plan.updates.filter((u) => u.mismatch).map((u) => `"${u.chat.title}"`);
+      const done: string[] = [`Saved ${saveable.length === 1 ? `"${chat.title}"` : `${saveable.length} chats`} to ${file.name}.`];
+      if (backup) done.push(`The previous version was kept as ${backup}.`);
+      if (mismatched.length) {
+        done.push(
+          `Some edits to ${mismatched.join(', ')} could not be stored exactly in this format. The viewer now shows what the file contains.`,
+        );
+      }
+      if (plan.notes.length) done.push(...plan.notes);
+      if (blocked.length) done.push(...blocked.map((c) => `"${c.title}" was not saved: ${c.writeBlocked}`));
+      setNotices((prev) => [...prev, ...done]);
+    } catch (e) {
+      setErrors((prev) => [...prev, `Save failed: ${(e as Error).message}`]);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   /** Remove a tab; if it was active, activate its neighbour. */
   const dropTab = (id: string) => {
     scrollMemory.delete(id);
@@ -169,7 +267,12 @@ export default function App() {
 
   const closeTab = (id: string) => {
     const c = chats[id];
-    if (c?.dirty && !window.confirm(`"${c.title}" has unsaved edits. Close anyway?\n(Export it first to keep changes.)`)) {
+    if (
+      c?.dirty &&
+      !window.confirm(
+        `"${c.title}" has unsaved edits. Close anyway?\n(Save to the original file or export it first to keep changes.)`,
+      )
+    ) {
       return;
     }
     dropTab(id);
@@ -187,6 +290,20 @@ export default function App() {
 
   const imageCount = Object.keys(assets).length;
 
+  const saveInfo = (c: Chat): { canSave: boolean; hint: string; target: string } => {
+    const file = c.origin ? files[c.origin.fileId] : undefined;
+    if (!file) return { canSave: false, hint: 'This chat is not tied to a file.', target: '' };
+    if (c.writeBlocked) return { canSave: false, hint: c.writeBlocked, target: file.name };
+    if (!file.target) {
+      return {
+        canSave: false,
+        hint: 'This file was opened without write access. Use Open files in Chrome or Edge, or the desktop app, to save back.',
+        target: '',
+      };
+    }
+    return { canSave: true, hint: `Write these edits back to ${file.name}`, target: file.name };
+  };
+
   return (
     <AssetsProvider value={assets}>
       <div
@@ -201,7 +318,15 @@ export default function App() {
         onDrop={(e) => {
           e.preventDefault();
           setDragging(false);
-          if (e.dataTransfer.files.length) void addFiles(e.dataTransfer.files);
+          if (!e.dataTransfer.files.length) return;
+          const files = Array.from(e.dataTransfer.files);
+          // Read the handles now, inside the drop event; the browser only hands them out here.
+          const pending = handlesFromDrop(e.dataTransfer);
+          void (async () => {
+            const handles = pending ? await pending : [];
+            const aligned = handles.length === files.length ? handles : undefined;
+            await addFiles(files, aligned);
+          })();
         }}
       >
         <Sidebar
@@ -212,6 +337,19 @@ export default function App() {
           onQuery={setQuery}
           onOpen={openChat}
           onPickFiles={(f) => void addFiles(f)}
+          onOpenWithPicker={
+            canOpenWithHandles()
+              ? () =>
+                  void pickFilesWithHandles()
+                    .then((picked) =>
+                      addFiles(
+                        picked.map((p) => p.file),
+                        picked.map((p) => p.target),
+                      ),
+                    )
+                    .catch((e: Error) => setErrors((prev) => [...prev, e.message]))
+              : undefined
+          }
           imageCount={imageCount}
           errors={errors}
           onDismissErrors={() => setErrors([])}
@@ -225,6 +363,16 @@ export default function App() {
 
         <main className="main">
           <TabBar tabs={tabs} activeId={activeId} onSelect={setActiveId} onClose={closeTab} />
+          {notices.length > 0 && (
+            <div className="notices" role="status">
+              {notices.map((n, i) => (
+                <p key={i} className="notice">
+                  {n}
+                </p>
+              ))}
+              <button onClick={() => setNotices([])}>Dismiss</button>
+            </div>
+          )}
           {activeChat ? (
             <ChatView
               key={activeChat.id}
@@ -232,6 +380,8 @@ export default function App() {
               onEdit={(patch) => editChat(activeChat.id, patch)}
               onRevert={() => revertChat(activeChat.id)}
               onRemove={() => removeChat(activeChat.id)}
+              onSave={() => void saveChat(activeChat.id)}
+              save={saveInfo(activeChat)}
               scrollMemory={scrollMemory}
             />
           ) : (
@@ -249,6 +399,11 @@ export default function App() {
         </main>
 
         {dragging && <div className="drop-overlay">Drop files to load chats and images</div>}
+        {saving && (
+          <div className="busy" role="status">
+            Saving…
+          </div>
+        )}
       </div>
     </AssetsProvider>
   );

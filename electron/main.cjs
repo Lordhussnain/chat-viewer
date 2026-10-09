@@ -1,10 +1,48 @@
 // Electron main process: opens the single-file viewer in a desktop window.
 // The viewer runs entirely in the renderer; nothing here reads or sends chat data.
-const { app, BrowserWindow, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 
 const APP_FILE = path.join(__dirname, '..', 'dist-single', 'chat-viewer.html');
+
+// Files the user has opened or dropped in this session. The viewer may only read or write these.
+const allowedPaths = new Set();
+// Originals already backed up this session, so each file is copied at most once.
+const backedUp = new Set();
+
+function allowedPath(p) {
+  if (typeof p !== 'string' || !allowedPaths.has(path.resolve(p))) {
+    throw new Error('This file was not opened in this session.');
+  }
+  return path.resolve(p);
+}
+
+ipcMain.on('file:allow', (_event, p) => {
+  if (typeof p === 'string') allowedPaths.add(path.resolve(p));
+});
+
+ipcMain.handle('file:read', (_event, p) => fs.readFileSync(allowedPath(p)));
+
+// Before the first overwrite, keep the original next to it as <name>.bak (never overwritten).
+ipcMain.handle('file:write', (_event, p, data) => {
+  const abs = allowedPath(p);
+  let backup;
+  if (!backedUp.has(abs)) {
+    const bak = `${abs}.bak`;
+    if (!fs.existsSync(bak)) {
+      fs.copyFileSync(abs, bak);
+      backup = bak;
+    }
+    backedUp.add(abs);
+  }
+  // Write a temporary file first, then rename it over the original, so a crash mid-write
+  // cannot leave a half-written chat behind.
+  const tmp = `${abs}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, Buffer.from(data));
+  fs.renameSync(tmp, abs);
+  return backup;
+});
 
 // Used by CI to confirm the packaged app renders: set CHAT_VIEWER_SCREENSHOT to a .png path.
 const SCREENSHOT_PATH = process.env.CHAT_VIEWER_SCREENSHOT || '';
@@ -21,6 +59,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      preload: path.join(__dirname, 'preload.cjs'),
     },
   });
 

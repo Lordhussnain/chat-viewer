@@ -11,6 +11,8 @@ interface Props {
   onQuery: (q: string) => void;
   onOpen: (id: string) => void;
   onPickFiles: (files: FileList) => void;
+  /** When set, Open uses this instead of the plain file input (browser handles, for write-back). */
+  onOpenWithPicker?: () => void;
   imageCount: number;
   errors: string[];
   onDismissErrors: () => void;
@@ -35,6 +37,7 @@ export function Sidebar({
   onQuery,
   onOpen,
   onPickFiles,
+  onOpenWithPicker,
   imageCount,
   errors,
   onDismissErrors,
@@ -108,18 +111,24 @@ export function Sidebar({
             </select>
           </label>
         </div>
-        <label className="button primary file-button">
-          Open files
-          <input
-            type="file"
-            multiple
-            accept=".json,.jsonl,.md,.markdown,.txt,.zip,image/*,application/json"
-            onChange={(e) => {
-              if (e.target.files?.length) onPickFiles(e.target.files);
-              e.target.value = '';
-            }}
-          />
-        </label>
+        {onOpenWithPicker ? (
+          <button className="primary" onClick={onOpenWithPicker}>
+            Open files
+          </button>
+        ) : (
+          <label className="button primary file-button">
+            Open files
+            <input
+              type="file"
+              multiple
+              accept=".json,.jsonl,.md,.markdown,.txt,.zip,image/*,application/json"
+              onChange={(e) => {
+                if (e.target.files?.length) onPickFiles(e.target.files);
+                e.target.value = '';
+              }}
+            />
+          </label>
+        )}
         <input
           className="search"
           type="search"

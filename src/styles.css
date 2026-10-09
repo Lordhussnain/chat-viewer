@@ -223,3 +223,14 @@ input[type='search'], input[type='text'], select, textarea, .title-input {
   border: 3px dashed var(--accent); display: flex; align-items: center; justify-content: center;
   font-size: 1.25rem; font-weight: 600; color: var(--accent-text); pointer-events: none; z-index: 10;
 }
+
+/* Save feedback: notices after a save, and a blocking "Saving…" overlay while files are written. */
+.notices {
+  display: flex; align-items: flex-start; gap: 0.75rem; flex-wrap: wrap;
+  padding: 0.5rem 0.875rem; background: var(--drop-bg); border-bottom: 1px solid var(--border);
+}
+.notice { margin: 0; flex: 1 1 20rem; font-size: 0.875rem; }
+.busy {
+  position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.25); font-size: 1.125rem; font-weight: 600; color: #fff; cursor: progress;
+}

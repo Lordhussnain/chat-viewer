@@ -1,4 +1,18 @@
 import type { Chat, Message, Role, SourceKind } from './types';
+import {
+  attachmentLines,
+  blockedEditor,
+  chatGPTEditor,
+  flatEditor,
+  markdownEditor,
+  openWebUIEditor,
+  type ChatEdit,
+  type Editor,
+  type MdSection,
+  type Ref,
+  type Slot,
+  type TitleSlot,
+} from './writeback';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -72,6 +86,9 @@ interface Conversation {
   createdAt?: string;
   updatedAt?: string;
   messages: Message[];
+  /** One reference per message, in the same order. */
+  refs: Ref[];
+  editor: Editor;
 }
 
 /** ChatGPT export: { title, mapping: { id: { message, parent, children } }, current_node } */
@@ -95,6 +112,7 @@ function fromChatGPT(conv: any): Conversation {
         .sort((a, b) => (mapping[a].message.create_time ?? 0) - (mapping[b].message.create_time ?? 0));
 
   const messages: Message[] = [];
+  const refs: Ref[] = [];
   for (const id of ids) {
     const msg = mapping[id]?.message;
     if (!msg || msg.metadata?.is_visually_hidden_from_conversation) continue;
@@ -108,20 +126,47 @@ function fromChatGPT(conv: any): Conversation {
       text,
       createdAt: toIso(msg.create_time),
     });
+    refs.push({ kind: 'node', key: id, node: mapping[id], slot: 'whole' });
   }
+
+  // The visible chain hangs from the parent of its first message; hidden nodes above that stay put.
+  const anchor = refs.length
+    ? ((refs[0] as { node: any }).node.parent ?? null)
+    : path.length
+      ? path[path.length - 1]
+      : null;
+
+  const editor = path.length
+    ? chatGPTEditor({
+        format: 'chatgpt',
+        nodes: mapping,
+        parentKey: 'parent',
+        childrenKey: 'children',
+        anchor,
+        refs,
+        setCurrent: (id) => {
+          conv.current_node = id;
+        },
+        title: { holder: conv, key: 'title' },
+      })
+    : blockedEditor('This export has no current branch recorded, so it can be viewed but not saved.');
 
   return {
     title: typeof conv.title === 'string' ? conv.title : undefined,
     createdAt: toIso(conv.create_time),
     updatedAt: toIso(conv.update_time),
     messages,
+    refs,
+    editor,
   };
 }
 
 /** Claude export: { uuid, name, created_at, updated_at, chat_messages: [{ sender, text, content }] } */
 function fromClaude(conv: any): Conversation {
+  const list: any[] = Array.isArray(conv.chat_messages) ? conv.chat_messages : [];
   const messages: Message[] = [];
-  for (const m of conv.chat_messages ?? []) {
+  const refs: Ref[] = [];
+  for (const m of list) {
     const text =
       typeof m.text === 'string' && m.text.trim() ? m.text : extractText(m.content);
     if (!text.trim()) continue;
@@ -131,24 +176,31 @@ function fromClaude(conv: any): Conversation {
       text,
       createdAt: toIso(m.created_at),
     });
+    refs.push({ kind: 'item', item: m, field: 'text' });
   }
   return {
     title: typeof conv.name === 'string' ? conv.name : undefined,
     createdAt: toIso(conv.created_at),
     updatedAt: toIso(conv.updated_at),
     messages,
+    refs,
+    editor: flatEditor('claude', list, refs, { holder: conv, key: 'name' }),
   };
 }
 
+const GENERIC_TEXT_FIELDS = ['content', 'text', 'message', 'parts'] as const;
+
 /** Generic: { title, messages: [{ role, content|text, createdAt }] } or a bare message array. */
-function fromGeneric(conv: any): Conversation {
+function fromGeneric(conv: any, bare: boolean): Conversation {
   const list: any[] = conv.messages ?? conv.chat_messages ?? [];
   const messages: Message[] = [];
+  const refs: Ref[] = [];
   for (const m of list) {
     if (!m || typeof m !== 'object') continue;
-    const text =
-      [m.content, m.text, m.message, m.parts].map((x) => extractText(x)).find((t) => t.trim()) ?? '';
-    if (!text.trim()) continue;
+    const values = [m.content, m.text, m.message, m.parts].map((x) => extractText(x));
+    const at = values.findIndex((t) => t.trim());
+    if (at < 0) continue;
+    const text = values[at];
     const roleRaw =
       m.role ?? (typeof m.author === 'object' ? m.author?.role : m.author) ?? m.sender ?? m.from;
     messages.push({
@@ -157,12 +209,17 @@ function fromGeneric(conv: any): Conversation {
       text,
       createdAt: toIso(m.createdAt ?? m.created_at ?? m.timestamp ?? m.create_time ?? m.time),
     });
+    refs.push({ kind: 'item', item: m, field: GENERIC_TEXT_FIELDS[at] });
   }
+  const titleKey = typeof conv.title === 'string' || !('name' in conv) ? 'title' : 'name';
+  const title: TitleSlot = bare ? null : { holder: conv, key: titleKey };
   return {
     title: typeof conv.title === 'string' ? conv.title : typeof conv.name === 'string' ? conv.name : undefined,
     createdAt: toIso(conv.createdAt ?? conv.created_at ?? conv.create_time),
     updatedAt: toIso(conv.updatedAt ?? conv.updated_at ?? conv.update_time),
     messages,
+    refs,
+    editor: flatEditor('generic', list, refs, title),
   };
 }
 
@@ -173,6 +230,8 @@ function fromGeneric(conv: any): Conversation {
 interface Found {
   kind: SourceKind;
   data: any;
+  /** True when `data` was a bare array of messages wrapped by us (it is not part of the file's structure). */
+  bare: boolean;
 }
 
 /**
@@ -181,41 +240,60 @@ interface Found {
  * Messages form a tree (parentId / childrenIds). We follow the active branch from currentId
  * back to the root. Assistant output lives in content_list: 'answer' (text),
  * 'thinking_summary' (reasoning) and 'image_gen' (image URL).
+ * One assistant node can yield a reasoning message and an answer message; both refer to that node.
  */
 function fromOpenWebUI(conv: any): Conversation {
   const history = conv.chat?.history ?? {};
   const byId: Record<string, any> = history.messages ?? {};
 
-  const path: any[] = [];
+  const path: string[] = [];
   const seen = new Set<string>();
   let cur: string | null | undefined = history.currentId ?? conv.currentId;
   while (cur && byId[cur] && !seen.has(cur)) {
     seen.add(cur);
-    path.push(byId[cur]);
+    path.push(cur);
     cur = byId[cur].parentId;
   }
   path.reverse();
-  const source: any[] = path.length ? path : Array.isArray(conv.chat?.messages) ? conv.chat.messages : [];
 
   const messages: Message[] = [];
-  const push = (role: Role, text: string, createdAt?: string) => {
-    if (text.trim()) messages.push({ id: newId('m'), role, text, createdAt });
+  const refs: Ref[] = [];
+
+  if (!path.length) {
+    // Older layout: a flat chat.messages list. It is shown, but not saved back.
+    const legacy: any[] = Array.isArray(conv.chat?.messages) ? conv.chat.messages : [];
+    for (const m of legacy) {
+      if (!m || typeof m !== 'object') continue;
+      const role = normalizeRole(m.role);
+      const text = extractText(m.content);
+      if (text.trim()) messages.push({ id: newId('m'), role, text, createdAt: toIso(m.timestamp) });
+    }
+    return {
+      title: typeof conv.title === 'string' ? conv.title : undefined,
+      createdAt: toIso(conv.created_at),
+      updatedAt: toIso(conv.updated_at),
+      messages,
+      refs,
+      editor: blockedEditor('This export uses an older chat layout, so it can be viewed but not saved yet.'),
+    };
+  }
+
+  const push = (role: Role, text: string, createdAt: string | undefined, key: string, node: any, slot: Slot) => {
+    if (!text.trim()) return;
+    messages.push({ id: newId('m'), role, text, createdAt });
+    refs.push({ kind: 'node', key, node, slot });
   };
 
-  for (const m of source) {
+  for (const id of path) {
+    const m = byId[id];
     if (!m || typeof m !== 'object') continue;
     const role = normalizeRole(m.role);
     const when = toIso(m.timestamp);
     const items: any[] = Array.isArray(m.content_list) ? m.content_list : [];
 
     if (role === 'user') {
-      const attachments = (m.files ?? []).map((f: any) => {
-        const name = String(f?.name ?? f?.filename ?? 'attachment');
-        const isImage = f?.file_class === 'vision' || String(f?.file_type ?? '').startsWith('image/');
-        if (isImage) return `![${name}](${f?.url ?? encodeURIComponent(name)})`;
-        return `📎 ${name}`;
-      });
-      push('user', [...attachments, extractText(m.content)].filter(Boolean).join('\n\n'), when);
+      const attachments = attachmentLines(m.files);
+      push('user', [...attachments, extractText(m.content)].filter(Boolean).join('\n\n'), when, id, m, 'user');
       continue;
     }
 
@@ -229,7 +307,7 @@ function fromOpenWebUI(conv: any): Conversation {
           return [title ? `**${title}**` : '', thought, body].filter(Boolean).join('\n\n');
         });
       if (typeof m.reasoning_content === 'string') thoughts.push(m.reasoning_content);
-      push('reasoning', thoughts.filter((t) => t.trim()).join('\n\n'), when);
+      push('reasoning', thoughts.filter((t) => t.trim()).join('\n\n'), when, id, m, 'reasoning');
 
       const answer =
         items
@@ -240,18 +318,37 @@ function fromOpenWebUI(conv: any): Conversation {
       const images = items
         .filter((i) => i?.phase === 'image_gen' && typeof i.content === 'string' && i.content.trim())
         .map((i) => `![generated image](${i.content.trim()})`);
-      push('assistant', [answer, ...images].filter(Boolean).join('\n\n'), when);
+      push('assistant', [answer, ...images].filter(Boolean).join('\n\n'), when, id, m, 'answer');
       continue;
     }
 
-    push(role, extractText(m.content), when);
+    push(role, extractText(m.content), when, id, m, 'whole');
   }
+
+  // The visible chain hangs from the parent of its first message.
+  const anchor = refs.length ? ((refs[0] as { node: any }).node.parentId ?? null) : path[path.length - 1];
+
+  const editor = openWebUIEditor({
+    format: 'openwebui',
+    nodes: byId,
+    parentKey: 'parentId',
+    childrenKey: 'childrenIds',
+    anchor,
+    refs,
+    setCurrent: (id) => {
+      history.currentId = id;
+      if ('currentId' in conv) conv.currentId = id;
+    },
+    title: { holder: conv, key: 'title' },
+  });
 
   return {
     title: typeof conv.title === 'string' ? conv.title : undefined,
     createdAt: toIso(conv.created_at),
     updatedAt: toIso(conv.updated_at),
     messages,
+    refs,
+    editor,
   };
 }
 
@@ -266,53 +363,78 @@ function findConversations(data: any, depth = 0): Found[] {
   if (data == null || depth > 4) return [];
   if (Array.isArray(data)) {
     if (data.length > 0 && data.every(looksLikeMessage)) {
-      return [{ kind: 'generic', data: { messages: data } }];
+      return [{ kind: 'generic', data: { messages: data }, bare: true }];
     }
     return data.flatMap((d) => findConversations(d, depth + 1));
   }
   if (typeof data !== 'object') return [];
-  if (data.mapping && typeof data.mapping === 'object') return [{ kind: 'chatgpt', data }];
+  if (data.mapping && typeof data.mapping === 'object') return [{ kind: 'chatgpt', data, bare: false }];
   if (data.chat && typeof data.chat === 'object' && (data.chat.history || Array.isArray(data.chat.messages))) {
-    return [{ kind: 'openwebui', data }];
+    return [{ kind: 'openwebui', data, bare: false }];
   }
-  if (Array.isArray(data.chat_messages)) return [{ kind: 'claude', data }];
-  if (Array.isArray(data.messages)) return [{ kind: 'generic', data }];
+  if (Array.isArray(data.chat_messages)) return [{ kind: 'claude', data, bare: false }];
+  if (Array.isArray(data.messages)) return [{ kind: 'generic', data, bare: false }];
   if (Array.isArray(data.conversations)) return findConversations(data.conversations, depth + 1);
   return [];
 }
 
 /** Parses JSON, or JSON Lines (one JSON value per line). */
-function parseJsonOrJsonl(text: string): unknown {
+function parseJsonOrJsonl(text: string): { data: unknown; jsonl: boolean } {
   try {
-    return JSON.parse(text);
+    return { data: JSON.parse(text), jsonl: false };
   } catch (firstErr) {
     const lines = text.split(/\r?\n/).filter((l) => l.trim());
     try {
-      return lines.map((l) => JSON.parse(l));
+      return { data: lines.map((l) => JSON.parse(l)), jsonl: true };
     } catch {
       throw firstErr;
     }
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Documents                                                           */
+/* ------------------------------------------------------------------ */
+
 /**
- * Parse one uploaded file into one or more chats.
- * Throws a readable Error if the file is not JSON or the shape is unknown.
+ * One source document (a JSON or markdown file, or one entry of a zip) parsed with the means to
+ * write edits back. Writing changes the document's structure in place; `serialize` then gives the
+ * new text. Chat indexes match `chats`.
  */
+export interface ChatDocument {
+  chats: Chat[];
+  /** Apply the edits to chat `index`. Throws if that chat can't be written back. */
+  write(index: number, edit: ChatEdit): string[];
+  /** The document text, including any edits applied so far. */
+  serialize(): string;
+}
+
+/** Parse one uploaded file into one or more chats. Throws a readable Error if it is not understood. */
 export function parseChatFile(fileName: string, text: string): Chat[] {
-  let data: unknown;
+  return parseChatDocument(fileName, text).chats;
+}
+
+export function parseChatDocument(fileName: string, text: string): ChatDocument {
+  if (/\.(md|markdown|txt)$/i.test(fileName)) return markdownDocument(fileName, text);
+  return jsonDocument(fileName, text);
+}
+
+function jsonDocument(fileName: string, text: string): ChatDocument {
+  let parsed: { data: unknown; jsonl: boolean };
   try {
-    data = parseJsonOrJsonl(text);
+    parsed = parseJsonOrJsonl(text);
   } catch (e) {
     throw new Error(`${fileName}: not valid JSON (${(e as Error).message})`);
   }
+  const { data, jsonl } = parsed;
 
   const found = findConversations(data);
   if (found.length === 0) {
     throw new Error(`${fileName}: no chats recognised (expected ChatGPT, Claude, or a {messages:[…]} format)`);
   }
 
-  return found.map(({ kind, data: raw }) => {
+  const editors: Editor[] = [];
+  const chats: Chat[] = found.map(({ kind, data: raw, bare }) => {
     const conv =
       kind === 'chatgpt'
         ? fromChatGPT(raw)
@@ -320,9 +442,9 @@ export function parseChatFile(fileName: string, text: string): Chat[] {
           ? fromClaude(raw)
           : kind === 'openwebui'
             ? fromOpenWebUI(raw)
-            : fromGeneric(raw);
+            : fromGeneric(raw, bare);
     const title = conv.title?.trim() || deriveTitle(conv.messages) || `Untitled (${fileName})`;
-    const messages = conv.messages;
+    editors.push(conv.editor);
     return {
       id: newId('chat'),
       fileName,
@@ -330,11 +452,28 @@ export function parseChatFile(fileName: string, text: string): Chat[] {
       title,
       createdAt: conv.createdAt,
       updatedAt: conv.updatedAt,
-      messages,
-      original: { title, messages },
+      messages: conv.messages,
+      original: { title, messages: conv.messages },
       dirty: false,
+      writeBlocked: conv.editor.readOnly,
     };
   });
+
+  return {
+    chats,
+    write(index, edit) {
+      const editor = editors[index];
+      if (!editor) throw new Error(`${fileName}: no chat at position ${index}`);
+      if (editor.readOnly) throw new Error(editor.readOnly);
+      return editor.write(edit);
+    },
+    serialize() {
+      if (jsonl) {
+        return `${(data as unknown[]).map((line) => JSON.stringify(line)).join('\n')}\n`;
+      }
+      return `${JSON.stringify(data, null, 2)}\n`;
+    },
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -360,7 +499,7 @@ function trimTrailingRules(s: string): string {
  * image attachments become markdown image links that the viewer resolves against
  * images loaded alongside the file.
  */
-export function parseMarkdownChat(fileName: string, text: string): Chat[] {
+function markdownDocument(fileName: string, text: string): ChatDocument {
   const lines = text.split(/\r?\n/);
 
   const h1 = lines.find((l) => /^#\s+/.test(l));
@@ -372,25 +511,26 @@ export function parseMarkdownChat(fileName: string, text: string): Chat[] {
   const exported = /Exported on:\s*(.+)$/m.exec(text)?.[1]?.trim();
   const exportedIso = exported ? toIso(Date.parse(exported)) : undefined;
 
-  const sections: { role: Role; lines: string[] }[] = [];
-  let current: { role: Role; lines: string[] } | null = null;
-  for (const line of lines) {
+  const firstTurn = lines.findIndex((l) => TURN_HEADING.test(l));
+  const header = firstTurn < 0 ? lines : lines.slice(0, firstTurn);
+
+  const sections: MdSection[] = [];
+  for (const line of lines.slice(firstTurn < 0 ? lines.length : firstTurn)) {
     const m = TURN_HEADING.exec(line);
     if (m) {
       const role: Role = m[1] === 'User' ? 'user' : m[2] ? 'reasoning' : 'assistant';
-      current = { role, lines: [] };
-      sections.push(current);
-    } else if (current) {
-      current.lines.push(line);
+      sections.push({ heading: line, role, lines: [] });
+    } else if (sections.length) {
+      sections[sections.length - 1].lines.push(line);
     }
   }
 
-  let messages: Message[];
+  const messages: Message[] = [];
+  const refs: Ref[] = [];
   let source: SourceKind;
   if (sections.length > 0) {
     source = 'aistudio';
-    messages = [];
-    for (const sec of sections) {
+    sections.forEach((sec, index) => {
       let body = sec.lines.join('\n');
       if (sec.role === 'user') {
         // Attachment blocks: keep only the image link itself, rendered inline.
@@ -400,13 +540,14 @@ export function parseMarkdownChat(fileName: string, text: string): Chat[] {
           .replace(/^\s*Image:\s*(!\[[^\]]*\]\([^)]*\))/gm, '$1');
       }
       body = trimTrailingRules(body);
-      if (!body) continue;
+      if (!body) return;
       messages.push({ id: newId('m'), role: sec.role, text: body });
-    }
+      refs.push({ kind: 'section', index });
+    });
   } else {
     // No turn headings: treat the whole document as one note.
     source = 'markdown';
-    messages = text.trim() ? [{ id: newId('m'), role: 'other', text: text.trim() }] : [];
+    if (text.trim()) messages.push({ id: newId('m'), role: 'other', text: text.trim() });
   }
 
   if (messages.length === 0) {
@@ -414,16 +555,32 @@ export function parseMarkdownChat(fileName: string, text: string): Chat[] {
   }
 
   const title = headingTitle || deriveTitle(messages) || fileName.replace(/\.[^.]+$/, '');
-  return [
-    {
-      id: newId('chat'),
-      fileName,
-      source,
-      title,
-      updatedAt: exportedIso,
-      messages,
-      original: { title, messages },
-      dirty: false,
+  const editor = markdownEditor(header, sections, refs, text);
+  const chat: Chat = {
+    id: newId('chat'),
+    fileName,
+    source,
+    title,
+    updatedAt: exportedIso,
+    messages,
+    original: { title, messages },
+    dirty: false,
+    writeBlocked: null,
+  };
+
+  return {
+    chats: [chat],
+    write(index, edit) {
+      if (index !== 0) throw new Error(`${fileName}: no chat at position ${index}`);
+      return editor.write(edit);
     },
-  ];
+    serialize() {
+      return editor.serialize?.() ?? text;
+    },
+  };
+}
+
+/** Export for tests and callers that only need the chats of a markdown transcript. */
+export function parseMarkdownChat(fileName: string, text: string): Chat[] {
+  return markdownDocument(fileName, text).chats;
 }

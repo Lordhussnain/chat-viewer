@@ -10,11 +10,15 @@ interface Props {
   onEdit: (patch: Partial<Pick<Chat, 'title' | 'messages'>>) => void;
   onRevert: () => void;
   onRemove: () => void;
+  /** Write the edits back to the source file. */
+  onSave: () => void;
+  /** Whether saving is possible here, why not, and which file it would write to. */
+  save: { canSave: boolean; hint: string; target: string };
   /** Scroll offset per chat id, kept by the parent so it survives switching tabs. */
   scrollMemory: Map<string, number>;
 }
 
-export function ChatView({ chat, onEdit, onRevert, onRemove, scrollMemory }: Props) {
+export function ChatView({ chat, onEdit, onRevert, onRemove, onSave, save, scrollMemory }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -64,12 +68,36 @@ export function ChatView({ chat, onEdit, onRevert, onRemove, scrollMemory }: Pro
         <div className="chat-meta">
           {chat.source} · {messages.length} messages · {stats.chars.toLocaleString()} chars · from{' '}
           <code>{chat.fileName}</code>
+          {' · '}
+          {save.canSave ? (
+            <span>
+              saves to <code>{save.target}</code>
+            </span>
+          ) : (
+            <span className="muted">export only</span>
+          )}
         </div>
         <div className="toolbar">
+          <button
+            className="primary"
+            disabled={!chat.dirty || !save.canSave}
+            title={save.hint}
+            onClick={() => {
+              if (
+                window.confirm(
+                  `Write the edits to "${save.target}"? In the desktop app the previous version is kept as a .bak copy.`,
+                )
+              ) {
+                onSave();
+              }
+            }}
+          >
+            Save to file
+          </button>
           <button onClick={exportJson}>Export JSON</button>
           <button onClick={exportMd}>Export Markdown</button>
           <button disabled={!chat.dirty} onClick={() => {
-            if (window.confirm('Discard all edits to this chat and restore the original?')) onRevert();
+            if (window.confirm('Discard edits made since this chat was opened or last saved?')) onRevert();
           }}>
             Revert
           </button>

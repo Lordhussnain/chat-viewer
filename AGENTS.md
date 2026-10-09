@@ -76,5 +76,6 @@ Before you report work as done, run `npm test`, `npx tsc --noEmit`, and `npm run
 - Only the active branch of a Qwen / Open WebUI-style tree is shown. Alternative branches are skipped.
 - Images are matched by file name across everything loaded in the session. Names can collide.
 - Image links from exports (for example Qwen CDN links carrying access keys) can expire, and the sandbox has no access to those hosts.
-- Edits live in memory until exported. Nothing is written back to the original files.
+- Edits are written back to the original file only through **Save to file**, which needs write access: the desktop app's file bridge (`electron/`), or Chromium file handles in the browser. Other browsers can export only. Some exports are view-only (ChatGPT without `current_node`, and Open WebUI with only the flat `chat.messages` list). See `README.md` → "Saving changes back to the original file".
+- Write-back keeps the original text of unchanged messages. Qwen / Open WebUI answers keep generated images apart from their text, so a text edit after an image reads back in front of it. Attachment lines are rebuilt from the file's attachment list and cannot be edited as text.
 - The production bundle is larger than 500 kB because of KaTeX and JSZip. This is a warning, not an error.

@@ -62,6 +62,8 @@ describe('chat view keeps its reading position', () => {
         onEdit={noop}
         onRevert={noop}
         onRemove={noop}
+        onSave={noop}
+        save={{ canSave: false, hint: '', target: '' }}
         scrollMemory={memory}
       />
     );
@@ -84,7 +86,15 @@ describe('chat view keeps its reading position', () => {
 
   it('starts at the top when the chat has never been scrolled', () => {
     mount(
-      <ChatView chat={chat} onEdit={noop} onRevert={noop} onRemove={noop} scrollMemory={new Map()} />,
+      <ChatView
+        chat={chat}
+        onEdit={noop}
+        onRevert={noop}
+        onRemove={noop}
+        onSave={noop}
+        save={{ canSave: false, hint: '', target: '' }}
+        scrollMemory={new Map()}
+      />,
     );
     expect((host!.querySelector('.chat-view') as HTMLElement).scrollTop).toBe(0);
   });
