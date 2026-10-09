@@ -1,4 +1,5 @@
 import type { Chat, Message, Role, SourceKind } from './types';
+import { imageUrl } from './imageUrl';
 import {
   attachmentLines,
   blockedEditor,
@@ -317,7 +318,7 @@ function fromOpenWebUI(conv: any): Conversation {
           .join('\n\n') || extractText(m.content);
       const images = items
         .filter((i) => i?.phase === 'image_gen' && typeof i.content === 'string' && i.content.trim())
-        .map((i) => `![generated image](${i.content.trim()})`);
+        .map((i) => `![generated image](${imageUrl(i.content)})`);
       push('assistant', [answer, ...images].filter(Boolean).join('\n\n'), when, id, m, 'answer');
       continue;
     }

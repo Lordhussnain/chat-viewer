@@ -5,6 +5,7 @@
 // references to change only what the user edited, leaving the rest of the file as it was.
 // Parts of the source that the viewer never shows (hidden turns, empty entries) are kept.
 import type { Message, Role } from './types';
+import { imageUrl } from './imageUrl';
 
 export type Slot = 'whole' | 'user' | 'reasoning' | 'answer';
 
@@ -344,7 +345,7 @@ function imageUrls(node: Record<string, any>): string[] {
   const items: any[] = Array.isArray(node.content_list) ? node.content_list : [];
   return items
     .filter((i) => i?.phase === 'image_gen' && typeof i.content === 'string' && i.content.trim())
-    .map((i) => String(i.content).trim());
+    .map((i) => imageUrl(String(i.content)));
 }
 
 function writeReasoning(node: Record<string, any>, text: string): void {
