@@ -1,5 +1,5 @@
 import type { Chat } from '../types';
-import { TEXT_SCALES, ZOOM_LEVELS, type DisplaySettings } from '../display';
+import { TEXT_SCALES, WIDTH_MAX, WIDTH_MIN, ZOOM_LEVELS, type DisplaySettings } from '../display';
 
 const pct = (n: number) => `${Math.round(n * 100)}%`;
 
@@ -108,6 +108,43 @@ export function Sidebar({
               {ZOOM_LEVELS.map((z) => (
                 <option key={z} value={z}>{pct(z)}</option>
               ))}
+            </select>
+          </label>
+          <label className="wide">
+            Width:{' '}
+            {display.width === WIDTH_MIN
+              ? 'comfortable'
+              : display.width >= WIDTH_MAX
+                ? 'full screen'
+                : `${display.width}%`}
+            <input
+              type="range"
+              min={WIDTH_MIN}
+              max={WIDTH_MAX}
+              step={5}
+              value={display.width}
+              aria-label="Content width"
+              onChange={(e) => onDisplayChange({ width: Number(e.target.value) })}
+            />
+            <span className="width-ends">
+              <em>Comfortable</em>
+              <em>Full screen</em>
+            </span>
+          </label>
+          <label>
+            Pages
+            <select
+              aria-label="Pages"
+              value={display.pages}
+              onChange={(e) => {
+                // Two pages is a full-screen reading layout, so it uses the whole width;
+                // going back to one page returns to the comfortable reading width.
+                const pages = Number(e.target.value) === 2 ? 2 : 1;
+                onDisplayChange({ pages, width: pages === 2 ? WIDTH_MAX : WIDTH_MIN });
+              }}
+            >
+              <option value={1}>1 page</option>
+              <option value={2}>2 pages</option>
             </select>
           </label>
         </div>

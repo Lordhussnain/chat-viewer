@@ -23,14 +23,14 @@ Before you report work as done, run `npm test`, `npx tsc --noEmit`, and `npm run
 
 ## Layout
 
-- `src/parse.ts` – chat format detection and adapters: ChatGPT (`mapping` tree), Claude (`chat_messages`), Qwen / Open WebUI-style (`chat.history.messages` tree, follows `currentId` → `parentId`), generic `{messages: [...]}`, JSON Lines, and AI Studio / generic Markdown transcripts (`parseMarkdownChat`).
+- `src/parse.ts` – chat format detection and adapters: ChatGPT (`mapping` tree), ChatGPT Exporter (`metadata` + `messages` with `say`, or `## Prompt:` / `## Response:` markdown), Claude (`chat_messages`), Qwen / Open WebUI-style (`chat.history.messages` tree, follows `currentId` → `parentId`), generic `{messages: [...]}`, JSON Lines, and AI Studio / generic Markdown transcripts (`parseMarkdownChat`).
 - `src/loader.ts` – entry point for opened or dropped files: routes `.zip` (JSZip), images, Markdown and JSON to the right parser.
 - `src/math.ts` – converts `\( … \)` and `\[ … \]` into `$…$` / `$$…$$` before markdown rendering. Code spans and fenced blocks are skipped.
-- `src/assets.tsx` – image registry (`AssetsContext`) and the markdown `<img>` component that resolves relative names like `image-1.jpg` to loaded object URLs.
+- `src/assets.tsx` – image registry (`AssetsContext`) and the markdown `<img>` component that resolves image links to loaded object URLs by file name (relative names like `image-1.jpg`, or the `fn` parameter / alt text of web links).
 - `src/export.ts` – JSON and Markdown export, and the download helper.
 - `src/types.ts` – `Chat`, `Message`, `Role`, `SourceKind`. Keep these in sync with the adapters.
 - `src/App.tsx` – global state: chats, library order, open tabs, active tab, images, errors, theme.
-- `src/components/` – `Sidebar`, `TabBar`, `ChatView` (header, toolbar, message list), `MessageCard` (view and edit modes, markdown, collapsible reasoning and tool output).
+- `src/components/` – `Sidebar`, `TabBar`, `ChatView` (header, toolbar, message list), `MessageCard` (view and edit modes, markdown, collapsible reasoning and tool output), `SplitPanes` (two chats side by side with a draggable divider).
 - `src/styles.css` – all styling. Colours come from CSS variables; light values are on `:root`, dark on `:root[data-theme='dark']`.
 - `index.html` – includes a small inline script that sets the theme before first paint.
 - `electron/main.cjs` – Electron main process. Loads `dist-single/chat-viewer.html` in a sandboxed window (no Node access in the renderer). Links that leave the app open in the browser. `CHAT_VIEWER_SCREENSHOT=<path>` saves a screenshot and quits; CI uses it as a render check.
@@ -47,13 +47,13 @@ Before you report work as done, run `npm test`, `npx tsc --noEmit`, and `npm run
 - **Don't call state setters from inside other state updaters.** This has caused bugs under React StrictMode. Compute the next value from the current render's state instead.
 - **Markdown rendering** uses `react-markdown` with `remark-math` and `rehype-katex`. Raw HTML is not enabled. If you add plugins, keep HTML disabled.
 - **Themes:** add colours as variables in both `:root` and `:root[data-theme='dark']`. Don't add hard-coded colours to component rules.
-- **Sizes are `rem`, not `px`:** the Text size setting scales the root font size, so any `px` font size or layout width won't scale with it. Borders may stay in `px`. Settings live in `src/display.ts` (text size and zoom, saved to `localStorage`). Zoom works through the `--ui-zoom` variable, which `.app` uses to compensate its width and height.
+- **Sizes are `rem`, not `px`:** the Text size setting scales the root font size, so any `px` font size or layout width won't scale with it. Borders may stay in `px`. Settings live in `src/display.ts` (text size, zoom, content width and page layout, saved to `localStorage`). Zoom works through the `--ui-zoom` variable, which `.app` uses to compensate its width and height. Content width works through `--content-grow` (0 = comfortable reading width, 1 = full pane), and the page layout through `:root[data-pages]` (two columns when set to 2).
 - **Dependencies:** add them with `npm install --save` / `--save-dev`, and commit the lockfile. Prefer a small library over hand-written code for well-defined formats such as zip.
 
 ## Tests
 
 - Tests live next to the code (`src/*.test.ts`, `src/*.test.tsx`). Vitest config is in `vite.config.ts`.
-- `parse.test.ts` covers the ChatGPT, Claude, generic and Markdown adapters. `openwebui.test.ts` covers Qwen / Open WebUI branch handling and includes a smoke test on real exports.
+- `parse.test.ts` covers the ChatGPT, ChatGPT Exporter, Claude, generic and Markdown adapters. `openwebui.test.ts` covers Qwen / Open WebUI branch handling and includes a smoke test on real exports.
 - `ui-behaviour.test.tsx` runs components in jsdom (scroll position per tab, sidebar collapse). Use it for behaviour that depends on the DOM.
 - `loader.test.ts` builds zip files in memory. `render.test.tsx` and `math.test.tsx` render components with `react-dom/server` and check the markup.
 - When you add a format or fix a parsing bug, add a small synthetic fixture that reproduces it. Don't rely only on the real exports.

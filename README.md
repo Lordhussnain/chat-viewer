@@ -44,7 +44,9 @@ npm run build      # type-check + production build into dist/
 1. Click **Open files** (or drop files anywhere on the window). You can select several at once.
 2. Every chat found in the files appears in the left list. Search filters by title and message text.
 3. Click a chat to open it in a tab. Open as many as you like; middle-click or × closes a tab.
-4. In a chat you can:
+4. Click **◫ Split** in the tab bar to show two chats side by side. Click a pane to focus it (its tab is highlighted) — then clicking a tab or a chat in the list opens in that pane. Drag the divider to resize, double-click it for an even split, and **× Close split** for the single view again.
+5. The sidebar's display settings change text size, zoom, content width (slide from the comfortable reading width to the full screen), and the page layout: one page, or two pages flowing side by side like an open book.
+6. In a chat you can:
    - edit the title at the top,
    - edit, delete, or move any message (↑ / ↓), change a message's role,
    - insert a new message after any message, or add one at the end,
@@ -79,6 +81,7 @@ Open any mix of these in one go:
 | ChatGPT export (`conversations.json`) | objects with a `mapping` tree; the current branch (`current_node`) is followed |
 | Claude export | objects with a `chat_messages` array (`sender`, `text`, `content` blocks) |
 | Qwen Chat / Open WebUI-style export | objects with `chat.history` (a tree of messages with `parentId` and `childrenIds`, active leaf in `currentId`). The active branch is shown. Reasoning (`thinking_summary`) is collapsed, generated images are shown inline, and attachments in `files` are shown as images or `📎` names. |
+| ChatGPT Exporter (`.json` or `.md`) | the `chatgptexporter.com` format: JSON with `metadata` and `messages` (`role`, `say`, `time`, `model`), or markdown split on `## Prompt:` / `## Response:` headings. Title and dates come from the header; the timestamp under each heading becomes the message time. Images in the markdown are shown inline. |
 | Generic JSON | `{ "title", "messages": [{ "role", "text" or "content", "createdAt" }] }`, a bare message array, or `{ "conversations": [...] }` |
 | JSON Lines | one JSON value per line |
 | AI Studio / markdown transcript (`.md`) | split on headings `## 👤 User`, `## 🤖 Model`, and `## 🤖 Model (Reasoning)`. Reasoning is shown collapsed. Other `.md` files become a single note. |
@@ -87,7 +90,7 @@ Open any mix of these in one go:
 
 Markdown in messages is rendered, and LaTeX (`$…$`, `$$…$$`) is typeset with KaTeX.
 
-Images are matched by file name across everything loaded in the session. If a transcript shows `[image not loaded: image-3.jpg]`, load that file too.
+Images are matched by file name across everything loaded in the session. If a transcript shows `[image not loaded: image-3.jpg]`, load that file too. Web images (for example ChatGPT Exporter attachments) are loaded from their link; when a link carries a file name (in the URL's `fn` parameter or as alt text), a loaded file of that name is used instead, which keeps working after the link expires.
 
 The JSON export from this app uses the generic shape, so exported files can be opened again here. Markdown export keeps image links as text, so load the image files alongside it to see them again.
 

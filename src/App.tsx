@@ -6,6 +6,7 @@ import { AssetsProvider } from './assets';
 import { Sidebar } from './components/Sidebar';
 import { TabBar } from './components/TabBar';
 import { ChatView } from './components/ChatView';
+import { SplitPanes } from './components/SplitPanes';
 import {
   canOpenWithHandles,
   desktopTarget,
@@ -74,6 +75,10 @@ export default function App() {
   // Open tabs, in display order.
   const [tabIds, setTabIds] = useState<string[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  // Split view: the right pane's chat, and which pane tab and sidebar clicks go to.
+  const [splitOn, setSplitOn] = useState(false);
+  const [splitId, setSplitId] = useState<string | null>(null);
+  const [splitFocus, setSplitFocus] = useState<'left' | 'right'>('left');
   const [errors, setErrors] = useState<string[]>([]);
   const [notices, setNotices] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -118,10 +123,48 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [anyDirty]);
 
-  const openChat = useCallback((id: string) => {
-    setTabIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
-    setActiveId(id);
-  }, []);
+  /**
+   * Show a chat in the focused pane. Clicking the chat that is already in the other pane
+   * just focuses that pane, so the same chat never occupies both sides.
+   */
+  const openChat = useCallback(
+    (id: string) => {
+      setTabIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+      if (splitOn && splitFocus === 'right') {
+        if (id === activeId) setSplitFocus('left');
+        else setSplitId(id);
+      } else if (splitOn && id === splitId) {
+        setSplitFocus('right');
+      } else {
+        setActiveId(id);
+      }
+    },
+    [splitOn, splitFocus, activeId, splitId],
+  );
+
+  /** Same routing as openChat, for tabs that are already open. */
+  const selectTab = (id: string) => {
+    if (splitOn && splitFocus === 'right') {
+      if (id === activeId) setSplitFocus('left');
+      else setSplitId(id);
+    } else if (splitOn && id === splitId) {
+      setSplitFocus('right');
+    } else {
+      setActiveId(id);
+    }
+  };
+
+  const toggleSplit = () => {
+    if (splitOn) {
+      setSplitOn(false);
+      setSplitId(null);
+      setSplitFocus('left');
+      return;
+    }
+    setSplitOn(true);
+    setSplitId(tabIds.find((t) => t !== activeId) ?? null);
+    setSplitFocus('left');
+  };
 
   const addFiles = useCallback(
     async (fileList: FileList | File[], targets?: (WriteTarget | undefined)[]) => {
@@ -263,6 +306,7 @@ export default function App() {
     const next = tabIds.filter((t) => t !== id);
     setTabIds(next);
     if (activeId === id) setActiveId(next[i] ?? next[i - 1] ?? null);
+    if (splitId === id) setSplitId(null);
   };
 
   const closeTab = (id: string) => {
@@ -289,6 +333,33 @@ export default function App() {
   };
 
   const imageCount = Object.keys(assets).length;
+
+  const splitChat = splitId ? chats[splitId] ?? null : null;
+  /** The chat in the focused pane drives the tab and sidebar highlight. */
+  const focusedChatId = splitOn && splitFocus === 'right' ? splitId : activeId;
+
+  const renderChat = (chat: Chat) => (
+    <ChatView
+      key={chat.id}
+      chat={chat}
+      onEdit={(patch) => editChat(chat.id, patch)}
+      onRevert={() => revertChat(chat.id)}
+      onRemove={() => removeChat(chat.id)}
+      onSave={() => void saveChat(chat.id)}
+      save={saveInfo(chat)}
+      scrollMemory={scrollMemory}
+    />
+  );
+
+  const paneHint = (side: 'left' | 'right') => (
+    <div className="pane-empty">
+      <p className="muted">
+        {side === 'right'
+          ? 'This pane is empty. Click it, then pick a chat — clicks open in the focused pane.'
+          : 'No chat open in the left pane. Pick one from the list.'}
+      </p>
+    </div>
+  );
 
   const saveInfo = (c: Chat): { canSave: boolean; hint: string; target: string } => {
     const file = c.origin ? files[c.origin.fileId] : undefined;
@@ -332,7 +403,7 @@ export default function App() {
         <Sidebar
           chats={filtered}
           openIds={openIds}
-          activeId={activeId}
+          activeId={focusedChatId}
           query={query}
           onQuery={setQuery}
           onOpen={openChat}
@@ -362,7 +433,14 @@ export default function App() {
         />
 
         <main className="main">
-          <TabBar tabs={tabs} activeId={activeId} onSelect={setActiveId} onClose={closeTab} />
+          <TabBar
+            tabs={tabs}
+            activeId={focusedChatId}
+            panes={splitOn ? { left: activeId, right: splitId } : null}
+            onSelect={selectTab}
+            onClose={closeTab}
+            onToggleSplit={toggleSplit}
+          />
           {notices.length > 0 && (
             <div className="notices" role="status">
               {notices.map((n, i) => (
@@ -373,17 +451,15 @@ export default function App() {
               <button onClick={() => setNotices([])}>Dismiss</button>
             </div>
           )}
-          {activeChat ? (
-            <ChatView
-              key={activeChat.id}
-              chat={activeChat}
-              onEdit={(patch) => editChat(activeChat.id, patch)}
-              onRevert={() => revertChat(activeChat.id)}
-              onRemove={() => removeChat(activeChat.id)}
-              onSave={() => void saveChat(activeChat.id)}
-              save={saveInfo(activeChat)}
-              scrollMemory={scrollMemory}
+          {splitOn && (activeChat || splitChat) ? (
+            <SplitPanes
+              focus={splitFocus}
+              onFocus={setSplitFocus}
+              left={activeChat ? renderChat(activeChat) : paneHint('left')}
+              right={splitChat ? renderChat(splitChat) : paneHint('right')}
             />
+          ) : activeChat ? (
+            renderChat(activeChat)
           ) : (
             <div className="empty">
               <h2>No chat open</h2>

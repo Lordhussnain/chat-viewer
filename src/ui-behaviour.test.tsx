@@ -4,6 +4,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { ChatView } from './components/ChatView';
 import { Sidebar } from './components/Sidebar';
+import { SplitPanes } from './components/SplitPanes';
 import type { Chat } from './types';
 
 // jsdom does not lay out content, so scrollTop never changes on its own. Store it manually.
@@ -114,7 +115,7 @@ describe('sidebar collapse', () => {
     onDismissErrors: noop,
     theme: 'light' as const,
     onToggleTheme: noop,
-    display: { textScale: 1, zoom: 1 },
+    display: { textScale: 1, zoom: 1, width: 0, pages: 1 as const },
     onDisplayChange: noop,
   };
 
@@ -138,5 +139,74 @@ describe('sidebar collapse', () => {
     const show = host!.querySelector('button[aria-label="Show sidebar"]') as HTMLButtonElement;
     act(() => show.click());
     expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('width and page layout settings', () => {
+  const makeProps = (onDisplayChange: (patch: Record<string, unknown>) => void) => ({
+    chats: [],
+    openIds: new Set<string>(),
+    activeId: null,
+    query: '',
+    onQuery: noop,
+    onOpen: noop,
+    onPickFiles: noop,
+    imageCount: 0,
+    errors: [],
+    onDismissErrors: noop,
+    theme: 'light' as const,
+    onToggleTheme: noop,
+    display: { textScale: 1, zoom: 1, width: 0, pages: 1 as const },
+    onDisplayChange,
+    collapsed: false,
+    onToggleCollapsed: noop,
+  });
+
+  it('sliding the width range reports the new content width', () => {
+    const onChange = vi.fn();
+    mount(<Sidebar {...makeProps(onChange)} />);
+    const range = host!.querySelector('input[type="range"]') as HTMLInputElement;
+    expect(range).not.toBeNull();
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(range, '70');
+      range.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(onChange).toHaveBeenCalledWith({ width: 70 });
+  });
+
+  it('switching to two pages also fills the width, and back restores it', () => {
+    const onChange = vi.fn();
+    mount(<Sidebar {...makeProps(onChange)} />);
+    const pages = host!.querySelector('select[aria-label="Pages"]') as HTMLSelectElement;
+    act(() => {
+      pages.value = '2';
+      pages.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(onChange).toHaveBeenCalledWith({ pages: 2, width: 100 });
+    act(() => {
+      pages.value = '1';
+      pages.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(onChange).toHaveBeenCalledWith({ pages: 1, width: 0 });
+  });
+});
+
+describe('split panes', () => {
+  it('shows both panes and sends clicks to the focused pane', () => {
+    const onFocus = vi.fn();
+    mount(
+      <SplitPanes focus="left" onFocus={onFocus} left={<div>Left content</div>} right={<div>Right content</div>} />,
+    );
+    const panes = host!.querySelectorAll('.pane');
+    expect(panes).toHaveLength(2);
+    expect(host!.textContent).toContain('Left content');
+    expect(host!.textContent).toContain('Right content');
+    expect(panes[0].classList.contains('focused')).toBe(true);
+
+    act(() => panes[1].dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
+    expect(onFocus).toHaveBeenLastCalledWith('right');
+    act(() => panes[0].dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
+    expect(onFocus).toHaveBeenLastCalledWith('left');
   });
 });
