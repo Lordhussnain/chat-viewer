@@ -4,7 +4,7 @@ name: Desktop app (Windows)
 # Download them from the workflow run's "Artifacts" section on GitHub.
 on:
   push:
-    branches: [arena/d9db7c55-chat-viewer, main]
+    branches: [arena/b71fe2dc-chat-viewer, arena/d9db7c55-chat-viewer, main]
   workflow_dispatch:
 
 permissions:
