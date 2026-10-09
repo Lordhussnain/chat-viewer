@@ -17,14 +17,14 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function mount(src: string) {
+function mount(src: string, opts: { assets?: Record<string, string>; alt?: string } = {}) {
   host = document.createElement('div');
   document.body.appendChild(host);
   root = createRoot(host);
   act(() => {
     root!.render(
-      <AssetsProvider value={{}}>
-        <MarkdownImage src={src} alt="generated image" />
+      <AssetsProvider value={opts.assets ?? {}}>
+        <MarkdownImage src={src} alt={opts.alt ?? 'generated image'} />
       </AssetsProvider>,
     );
   });
@@ -74,6 +74,32 @@ describe('Qwen image links', () => {
     const [chat] = parseChatFile('qwen.json', JSON.stringify([file]));
     const answer = chat.messages.find((m) => m.role === 'assistant')!;
     expect(answer.text).toBe(`![generated image](${url})`);
+  });
+});
+
+describe('ChatGPT Exporter image links', () => {
+  it('shows a loaded image file matched by the fn parameter of the web link', () => {
+    const el = mount('https://chatgpt.com/backend-api/estuary/content?id=1&fn=photo.png&sig=x', {
+      assets: { 'photo.png': 'blob:photo' },
+      alt: 'photo.png',
+    });
+    const img = el.querySelector('img');
+    expect(img?.getAttribute('src')).toBe('blob:photo');
+    expect(el.textContent).not.toContain('Loading image');
+    expect(el.textContent).not.toContain('image not loaded');
+  });
+
+  it('matches a loaded file by the alt name when the link has no fn parameter', () => {
+    const el = mount('https://chatgpt.com/backend-api/estuary/content?id=2', {
+      assets: { 'photo.png': 'blob:photo' },
+      alt: 'photo.png',
+    });
+    expect(el.querySelector('img')?.getAttribute('src')).toBe('blob:photo');
+  });
+
+  it('loads the web image when no file with that name has been loaded', () => {
+    const el = mount('https://chatgpt.com/backend-api/estuary/content?id=3&fn=photo.png', { alt: 'photo.png' });
+    expect(el.textContent).toContain('Loading image');
   });
 });
 

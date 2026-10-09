@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { existsSync, readdirSync } from 'node:fs';
 import { parseChatFile, extractText, normalizeRole } from './parse';
 import { chatToJson, chatToMarkdown } from './export';
 
@@ -71,6 +72,56 @@ const claudeExport = JSON.stringify([
   },
 ]);
 
+const exporterJson = JSON.stringify({
+  metadata: {
+    title: 'Math help',
+    user: { name: 'Anon', email: '' },
+    dates: { created: '7/5/2026 7:43:01', updated: '7/5/2026 8:10:12', exported: '10/9/2026 12:46:51' },
+    link: 'https://chatgpt.com/c/x',
+    powered_by: 'ChatGPT Exporter (https://www.chatgptexporter.com)',
+  },
+  messages: [
+    { role: 'Prompt', model: '', say: 'What is 2+2?', time: '7/5/2026, 7:43:01 AM' },
+    {
+      role: 'Response',
+      model: 'gpt-5-5',
+      say: 'It is 4.\n\n\uE200genui\uE202{"block":{"type_id":"X"}}\uE201\n\nDone.',
+      time: '7/5/2026, 7:43:02 AM',
+    },
+    { role: 'Response', model: '', say: '', time: '7/5/2026, 7:43:03 AM' },
+  ],
+});
+
+const exporterMd = [
+  '# Math help',
+  '',
+  '**User:** Anon  ',
+  '**Created:** 7/5/2026 7:43:01  ',
+  '**Updated:** 7/5/2026 8:10:12  ',
+  '**Exported:** 10/9/2026 12:46:51  ',
+  '**Link:** [https://chatgpt.com/c/x](https://chatgpt.com/c/x)  ',
+  '',
+  '## Prompt:',
+  '7/5/2026, 7:43:01 AM',
+  '',
+  '![photo.png](https://chatgpt.com/backend-api/estuary/content?id=1&fn=photo.png&sig=abc)',
+  '',
+  'What is in this picture?',
+  '',
+  '## Response:',
+  '7/5/2026, 7:43:02 AM · gpt-5-5',
+  '',
+  'A triangle.',
+  '',
+  '## Why this matters',
+  '',
+  'Because.',
+  '',
+  '---',
+  'Powered by [ChatGPT Exporter](https://www.chatgptexporter.com)',
+  '',
+].join('\n');
+
 describe('parseChatFile', () => {
   it('reads a ChatGPT conversations.json, following the current branch and skipping thoughts', () => {
     const [chat] = parseChatFile('conversations.json', chatgptExport);
@@ -121,6 +172,38 @@ describe('parseChatFile', () => {
     expect(c.messages).toHaveLength(2);
   });
 
+  it('reads a ChatGPT Exporter JSON export (metadata plus Prompt/Response `say` messages)', () => {
+    const [chat] = parseChatFile('chatgpt-conversation.json', exporterJson);
+    expect(chat.source).toBe('chatgptexporter');
+    expect(chat.title).toBe('Math help');
+    expect(chat.createdAt).toBe(new Date('7/5/2026 7:43:01').toISOString());
+    expect(chat.updatedAt).toBe(new Date('7/5/2026 8:10:12').toISOString());
+    // The empty trailing response is skipped; widget markup is not shown.
+    expect(chat.messages.map((m) => [m.role, m.text])).toEqual([
+      ['user', 'What is 2+2?'],
+      ['assistant', 'It is 4.\n\nDone.'],
+    ]);
+    expect(chat.messages[0].createdAt).toBe(new Date('7/5/2026, 7:43:01 AM').toISOString());
+  });
+
+  it('reads a ChatGPT Exporter markdown transcript, keeping image links and dropping stamps and the footer', () => {
+    const [chat] = parseChatFile('chatgpt-conversation.md', exporterMd);
+    expect(chat.source).toBe('chatgptexporter');
+    expect(chat.title).toBe('Math help');
+    expect(chat.createdAt).toBe(new Date('7/5/2026 7:43:01').toISOString());
+    expect(chat.updatedAt).toBe(new Date('7/5/2026 8:10:12').toISOString());
+    expect(chat.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(chat.messages[0].text).toBe(
+      '![photo.png](https://chatgpt.com/backend-api/estuary/content?id=1&fn=photo.png&sig=abc)\n\nWhat is in this picture?',
+    );
+    expect(chat.messages[0].createdAt).toBe(new Date('7/5/2026, 7:43:01 AM').toISOString());
+    expect(chat.messages[1].createdAt).toBe(new Date('7/5/2026, 7:43:02 AM').toISOString());
+    // Ordinary headings inside an answer stay in its text; the footer does not.
+    expect(chat.messages[1].text).toBe('A triangle.\n\n## Why this matters\n\nBecause.');
+    expect(chat.messages[1].text).not.toContain('Powered by');
+    expect(chat.messages.every((m) => !m.text.includes('\uE200'))).toBe(true);
+  });
+
   it('throws readable errors for bad input', () => {
     expect(() => parseChatFile('bad.json', '{not json')).toThrow(/bad.json: not valid JSON/);
     expect(() => parseChatFile('empty.json', '{"foo": 1}')).toThrow(/no chats recognised/);
@@ -130,7 +213,9 @@ describe('parseChatFile', () => {
 describe('helpers', () => {
   it('normalizes roles', () => {
     expect(normalizeRole('Human')).toBe('user');
+    expect(normalizeRole('Prompt')).toBe('user');
     expect(normalizeRole('model')).toBe('assistant');
+    expect(normalizeRole('Response')).toBe('assistant');
     expect(normalizeRole('function')).toBe('tool');
     expect(normalizeRole(undefined)).toBe('other');
   });
@@ -166,5 +251,30 @@ describe('bundled example', () => {
     const chats = parseChatFile('sample-generic.json', text);
     expect(chats.map((c) => c.title)).toEqual(['Sample: planning a trip', 'Sample: code question']);
     expect(chats[1].messages[0].text).toBe('How do I reverse a list in Python?');
+  });
+});
+
+describe('real ChatGPT Exporter files in Chats/', () => {
+  const chatDir = new URL('../Chats/', import.meta.url);
+  const names = existsSync(chatDir) ? readdirSync(chatDir) : [];
+  const hasJson = names.includes('chatgpt-conversation.json');
+  const hasMd = names.includes('chatgpt-conversation.md');
+
+  it.skipIf(!hasJson || !hasMd)('the JSON and the markdown export describe the same chat', async () => {
+    const { readFileSync } = await import('node:fs');
+    const [j] = parseChatFile('chatgpt-conversation.json', readFileSync(new URL('chatgpt-conversation.json', chatDir), 'utf8'));
+    const [m] = parseChatFile('chatgpt-conversation.md', readFileSync(new URL('chatgpt-conversation.md', chatDir), 'utf8'));
+    expect(j.source).toBe('chatgptexporter');
+    expect(m.source).toBe('chatgptexporter');
+    expect(m.title).toBe(j.title);
+    expect(j.messages.length).toBeGreaterThan(0);
+    expect(m.messages.length).toBeGreaterThan(j.messages.length); // the markdown keeps the prompts too
+    expect(m.messages.every((x) => x.createdAt)).toBe(true);
+    // The images live only in the markdown; they stay as links, and no export noise is shown.
+    expect(m.messages.some((x) => /!\[[^\]]*\]\(https?:/.test(x.text))).toBe(true);
+    for (const chat of [j, m]) {
+      expect(chat.messages.every((x) => !x.text.includes('\uE200'))).toBe(true);
+      expect(chat.messages.every((x) => !x.text.includes('Powered by'))).toBe(true);
+    }
   });
 });

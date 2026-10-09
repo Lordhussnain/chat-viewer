@@ -4,6 +4,7 @@ import {
   attachmentLines,
   blockedEditor,
   chatGPTEditor,
+  exporterMdStyle,
   flatEditor,
   markdownEditor,
   openWebUIEditor,
@@ -27,8 +28,8 @@ export function newId(prefix: string): string {
 
 export function normalizeRole(raw: unknown): Role {
   const r = typeof raw === 'string' ? raw.toLowerCase() : '';
-  if (r === 'user' || r === 'human') return 'user';
-  if (['assistant', 'ai', 'model', 'bot', 'claude', 'chatgpt'].includes(r)) return 'assistant';
+  if (r === 'user' || r === 'human' || r === 'prompt') return 'user';
+  if (['assistant', 'ai', 'model', 'bot', 'claude', 'chatgpt', 'response'].includes(r)) return 'assistant';
   if (r === 'system') return 'system';
   if (r === 'reasoning' || r === 'thinking') return 'reasoning';
   if (['tool', 'function', 'ipython', 'tool_result'].includes(r)) return 'tool';
@@ -69,6 +70,18 @@ export function toIso(v: unknown): string | undefined {
     return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
   }
   return undefined;
+}
+
+/**
+ * ChatGPT embeds interactive widgets as "genui" markers (private-use characters around a JSON
+ * blob). They are not readable text, so they are dropped from what the viewer shows.
+ */
+function stripGenui(text: string): string {
+  return text
+    .replace(/\n{2,}\uE200genui\uE202[\s\S]*?\uE201\n{2,}/g, '\n\n')
+    .replace(/^\uE200genui\uE202[\s\S]*?\uE201\n{0,2}/, '')
+    .replace(/\n{0,2}\uE200genui\uE202[\s\S]*?\uE201$/, '')
+    .replace(/\uE200genui\uE202[\s\S]*?\uE201/g, '');
 }
 
 function deriveTitle(messages: Message[]): string {
@@ -224,6 +237,37 @@ function fromGeneric(conv: any, bare: boolean): Conversation {
   };
 }
 
+/** ChatGPT Exporter (chatgptexporter.com) JSON: { metadata, messages: [{ role, model, say, time }] }. */
+function fromChatGPTExporter(conv: any, bare: boolean): Conversation {
+  if (!conv.metadata || typeof conv.metadata !== 'object') conv.metadata = {};
+  const meta: Record<string, any> = conv.metadata;
+  const list: any[] = Array.isArray(conv.messages) ? conv.messages : [];
+  const messages: Message[] = [];
+  const refs: Ref[] = [];
+  for (const m of list) {
+    if (!m || typeof m !== 'object') continue;
+    const field = 'say' in m ? 'say' : 'content' in m ? 'content' : 'text';
+    const text = stripGenui(extractText(m[field]));
+    if (!text.trim()) continue;
+    messages.push({
+      id: newId('m'),
+      role: normalizeRole(m.role),
+      text,
+      createdAt: toIso(m.time ?? m.createdAt ?? m.created_at),
+    });
+    refs.push({ kind: 'item', item: m, field });
+  }
+  const dates: Record<string, any> = meta.dates && typeof meta.dates === 'object' ? meta.dates : {};
+  return {
+    title: typeof meta.title === 'string' ? meta.title : undefined,
+    createdAt: toIso(dates.created ?? dates.createdAt),
+    updatedAt: toIso(dates.updated ?? dates.updatedAt ?? dates.exported),
+    messages,
+    refs,
+    editor: flatEditor('exporter', list, refs, bare ? null : { holder: meta, key: 'title' }),
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* File-level detection                                                */
 /* ------------------------------------------------------------------ */
@@ -360,6 +404,13 @@ function looksLikeMessage(x: unknown): boolean {
   return ('role' in o || 'sender' in o || 'author' in o) && ('content' in o || 'text' in o);
 }
 
+/** ChatGPT Exporter JSON: messages carry their text in `say`, with a `metadata` header. */
+function isChatGPTExporter(data: any): boolean {
+  if (!data || typeof data !== 'object' || !Array.isArray(data.messages)) return false;
+  if (data.messages.some((m: any) => m && typeof m === 'object' && 'say' in m)) return true;
+  return typeof data.metadata?.powered_by === 'string' && /chatgpt\s*exporter/i.test(data.metadata.powered_by);
+}
+
 function findConversations(data: any, depth = 0): Found[] {
   if (data == null || depth > 4) return [];
   if (Array.isArray(data)) {
@@ -374,6 +425,7 @@ function findConversations(data: any, depth = 0): Found[] {
     return [{ kind: 'openwebui', data, bare: false }];
   }
   if (Array.isArray(data.chat_messages)) return [{ kind: 'claude', data, bare: false }];
+  if (isChatGPTExporter(data)) return [{ kind: 'chatgptexporter', data, bare: false }];
   if (Array.isArray(data.messages)) return [{ kind: 'generic', data, bare: false }];
   if (Array.isArray(data.conversations)) return findConversations(data.conversations, depth + 1);
   return [];
@@ -443,7 +495,9 @@ function jsonDocument(fileName: string, text: string): ChatDocument {
           ? fromClaude(raw)
           : kind === 'openwebui'
             ? fromOpenWebUI(raw)
-            : fromGeneric(raw, bare);
+            : kind === 'chatgptexporter'
+              ? fromChatGPTExporter(raw, bare)
+              : fromGeneric(raw, bare);
     const title = conv.title?.trim() || deriveTitle(conv.messages) || `Untitled (${fileName})`;
     editors.push(conv.editor);
     return {
@@ -478,7 +532,7 @@ function jsonDocument(fileName: string, text: string): ChatDocument {
 }
 
 /* ------------------------------------------------------------------ */
-/* Markdown transcripts (e.g. AI Studio "Download as Markdown")        */
+/* Markdown transcripts (AI Studio, ChatGPT Exporter, plain notes)     */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -487,12 +541,37 @@ function jsonDocument(fileName: string, text: string): ChatDocument {
  */
 const TURN_HEADING = /^##\s+(?:\S+\s+)?(User|Model)(?:\s*\((Reasoning)\))?\s*$/;
 
+/** ChatGPT Exporter turn headings: "## Prompt:", "## Response:" (the colon is optional). */
+const EXPORTER_TURN = /^##\s+(Prompt|Response|Reasoning|System|Tool)\s*:?\s*$/;
+
+/** Timestamp line the ChatGPT Exporter puts right after a turn heading: "7/5/2026, 7:43:01 AM · gpt-5-5". */
+const EXPORTER_STAMP = /^(\d{1,2}\/\d{1,2}\/\d{4},?\s+\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?)(?:\s*·.*)?$/i;
+
+/** The "Powered by ChatGPT Exporter" footer the exporter appends at the end of the document. */
+const EXPORTER_FOOTER = /\s*Powered by \[?ChatGPT Exporter[\s\S]*$/i;
+
 function trimTrailingRules(s: string): string {
   let out = s.trim();
   while (/(^|\n)\s*(-{3,}|\*{3,})\s*$/.test(out)) {
     out = out.replace(/(^|\n)\s*(-{3,}|\*{3,})\s*$/, '').trim();
   }
   return out;
+}
+
+/** The turn a heading starts, and which transcript style it belongs to. */
+function turnRole(line: string): { role: Role; style: 'aistudio' | 'exporter' } | null {
+  const exp = EXPORTER_TURN.exec(line);
+  if (exp) {
+    const word = exp[1].toLowerCase();
+    const role: Role = word === 'prompt' ? 'user' : word === 'response' ? 'assistant' : (word as Role);
+    return { role, style: 'exporter' };
+  }
+  const ai = TURN_HEADING.exec(line);
+  if (ai) {
+    const role: Role = ai[1] === 'User' ? 'user' : ai[2] ? 'reasoning' : 'assistant';
+    return { role, style: 'aistudio' };
+  }
+  return null;
 }
 
 /**
@@ -512,15 +591,29 @@ function markdownDocument(fileName: string, text: string): ChatDocument {
   const exported = /Exported on:\s*(.+)$/m.exec(text)?.[1]?.trim();
   const exportedIso = exported ? toIso(Date.parse(exported)) : undefined;
 
-  const firstTurn = lines.findIndex((l) => TURN_HEADING.test(l));
+  let firstTurn = -1;
+  let style: 'aistudio' | 'exporter' = 'aistudio';
+  for (let i = 0; i < lines.length; i++) {
+    const turn = turnRole(lines[i]);
+    if (turn) {
+      firstTurn = i;
+      style = turn.style;
+      break;
+    }
+  }
   const header = firstTurn < 0 ? lines : lines.slice(0, firstTurn);
+  const headerText = header.join('\n');
+
+  // ChatGPT Exporter writes its dates as bold labels in the header.
+  const created = /\*\*Created:\*\*\s*(.+)$/m.exec(headerText)?.[1]?.trim();
+  const updated = /\*\*Updated:\*\*\s*(.+)$/m.exec(headerText)?.[1]?.trim();
+  const expExported = /\*\*Exported:\*\*\s*(.+)$/m.exec(headerText)?.[1]?.trim();
 
   const sections: MdSection[] = [];
   for (const line of lines.slice(firstTurn < 0 ? lines.length : firstTurn)) {
-    const m = TURN_HEADING.exec(line);
-    if (m) {
-      const role: Role = m[1] === 'User' ? 'user' : m[2] ? 'reasoning' : 'assistant';
-      sections.push({ heading: line, role, lines: [] });
+    const turn = turnRole(line);
+    if (turn) {
+      sections.push({ heading: line, role: turn.role, lines: [] });
     } else if (sections.length) {
       sections[sections.length - 1].lines.push(line);
     }
@@ -530,19 +623,38 @@ function markdownDocument(fileName: string, text: string): ChatDocument {
   const refs: Ref[] = [];
   let source: SourceKind;
   if (sections.length > 0) {
-    source = 'aistudio';
+    source = style === 'exporter' ? 'chatgptexporter' : 'aistudio';
     sections.forEach((sec, index) => {
-      let body = sec.lines.join('\n');
-      if (sec.role === 'user') {
+      let rest = sec.lines;
+      let createdAt: string | undefined;
+      if (style === 'exporter') {
+        // The timestamp line after the heading becomes the message time; it is kept for write-back.
+        const take =
+          rest.length > 0 && EXPORTER_STAMP.test(rest[0])
+            ? 1
+            : rest.length > 1 && rest[0].trim() === '' && EXPORTER_STAMP.test(rest[1])
+              ? 2
+              : 0;
+        if (take > 0) {
+          sec.head = rest.slice(0, take);
+          rest = rest.slice(take);
+          const stamp = sec.head.map((l) => EXPORTER_STAMP.exec(l)).find((m) => m);
+          createdAt = stamp ? toIso(stamp[1]) : undefined;
+        }
+      }
+      let body = rest.join('\n');
+      if (style === 'exporter') {
+        body = stripGenui(body.replace(EXPORTER_FOOTER, ''));
+      } else if (sec.role === 'user') {
         // Attachment blocks: keep only the image link itself, rendered inline.
         body = body
           .replace(/\*\*Image Attachment:\*\*/g, '')
           .replace(/^\s*File Name:.*$/gm, '')
-          .replace(/^\s*Image:\s*(!\[[^\]]*\]\([^)]*\))/gm, '$1');
+          .replace(/^\s*Image:\s*(\!\[[^\]]*\]\([^)]*\))/gm, '$1');
       }
       body = trimTrailingRules(body);
       if (!body) return;
-      messages.push({ id: newId('m'), role: sec.role, text: body });
+      messages.push({ id: newId('m'), role: sec.role, text: body, createdAt });
       refs.push({ kind: 'section', index });
     });
   } else {
@@ -557,13 +669,14 @@ function markdownDocument(fileName: string, text: string): ChatDocument {
 
   const title = headingTitle || deriveTitle(messages) || fileName.replace(/\.[^.]+$/, '');
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
-  const editor = markdownEditor(header, sections, refs, text, eol);
+  const editor = markdownEditor(header, sections, refs, text, eol, style === 'exporter' ? exporterMdStyle : undefined);
   const chat: Chat = {
     id: newId('chat'),
     fileName,
     source,
     title,
-    updatedAt: exportedIso,
+    createdAt: created ? toIso(created) : undefined,
+    updatedAt: updated ? toIso(updated) : expExported ? toIso(expExported) : exportedIso,
     messages,
     original: { title, messages },
     dirty: false,

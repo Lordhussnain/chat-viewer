@@ -252,6 +252,107 @@ describe('Claude and generic flat exports (synthetic)', () => {
   });
 });
 
+describe('ChatGPT Exporter exports (synthetic)', () => {
+  const exporterJson = JSON.stringify({
+    metadata: {
+      title: 'Math help',
+      user: { name: 'Anon', email: '' },
+      dates: { created: '7/5/2026 7:43:01', updated: '7/5/2026 8:10:12', exported: '10/9/2026 12:46:51' },
+      link: 'https://chatgpt.com/c/x',
+      powered_by: 'ChatGPT Exporter (https://www.chatgptexporter.com)',
+    },
+    messages: [
+      { role: 'Prompt', model: '', say: 'What is 2+2?', time: '7/5/2026, 7:43:01 AM' },
+      { role: 'Response', model: 'gpt-5-5', say: 'It is 4.', time: '7/5/2026, 7:43:02 AM' },
+      { role: 'Response', model: '', say: '', time: '7/5/2026, 7:43:03 AM' },
+    ],
+  });
+
+  const exporterMd = [
+    '# Math help',
+    '',
+    '**User:** Anon  ',
+    '**Created:** 7/5/2026 7:43:01  ',
+    '**Updated:** 7/5/2026 8:10:12  ',
+    '**Exported:** 10/9/2026 12:46:51  ',
+    '',
+    '## Prompt:',
+    '7/5/2026, 7:43:01 AM',
+    '',
+    '![photo.png](https://chatgpt.com/backend-api/estuary/content?id=1&fn=photo.png&sig=abc)',
+    '',
+    'What is in this picture?',
+    '',
+    '## Response:',
+    '7/5/2026, 7:43:02 AM · gpt-5-5',
+    '',
+    'A triangle.',
+    '',
+    '---',
+    'Powered by [ChatGPT Exporter](https://www.chatgptexporter.com)',
+    '',
+  ].join('\n');
+
+  it('round-trips the JSON with no edits, and keeps empty entries', () => {
+    const out = edit('e.json', exporterJson, (m) => m);
+    expect(out.notes).toEqual([]);
+    expect(simple(out.again.messages)).toEqual(simple(out.before.messages));
+    expect(out.again.title).toBe('Math help');
+  });
+
+  it('edits, inserts and deletes in the JSON, and writes the title', () => {
+    const out = edit(
+      'e.json',
+      exporterJson,
+      (m) => [m[0], { ...m[1], text: 'It is four.' }, { id: 'z', role: 'user' as const, text: 'Thanks' }],
+      { title: 'Renamed' },
+    );
+    expect(out.again.messages.map((m) => [m.role, m.text])).toEqual([
+      ['user', 'What is 2+2?'],
+      ['assistant', 'It is four.'],
+      ['user', 'Thanks'],
+    ]);
+    expect(out.again.title).toBe('Renamed');
+    const raw = JSON.parse(out.out);
+    expect(raw.metadata.title).toBe('Renamed');
+    expect(raw.messages.map((x: any) => x.role)).toEqual(['Prompt', 'Response', 'Prompt', 'Response']);
+    expect(raw.messages[0].say).toBe('What is 2+2?');
+  });
+
+  it('keeps unchanged exporter markdown turns byte for byte', () => {
+    const out = edit('e.md', exporterMd, (m) => m);
+    expect(out.notes).toEqual([]);
+    expect(out.out.trimEnd()).toBe(exporterMd.trimEnd());
+  });
+
+  it('rewrites one turn and keeps its timestamp line and the footer', () => {
+    const out = edit('e.md', exporterMd, (m) => m.map((x) => (x.role === 'assistant' ? { ...x, text: 'It is a triangle.' } : x)));
+    expect(out.out).toContain('## Response:\n7/5/2026, 7:43:02 AM · gpt-5-5\n\nIt is a triangle.');
+    expect(out.out).toContain('## Prompt:\n7/5/2026, 7:43:01 AM');
+    expect(out.out).toContain('Powered by [ChatGPT Exporter](https://www.chatgptexporter.com)');
+    expect(simple(out.again.messages)).toEqual([
+      ['user', '![photo.png](https://chatgpt.com/backend-api/estuary/content?id=1&fn=photo.png&sig=abc)\n\nWhat is in this picture?'],
+      ['assistant', 'It is a triangle.'],
+    ]);
+    expect(out.again.messages[1].createdAt).toBe(new Date('7/5/2026, 7:43:02 AM').toISOString());
+  });
+
+  it('inserts, deletes and changes a role with exporter headings', () => {
+    const out = edit(
+      'e.md',
+      exporterMd,
+      (m) => [{ id: 'z', role: 'assistant' as const, text: 'Welcome!' }, { ...m[1], role: 'user' as const }],
+      { title: 'Renamed notes' },
+    );
+    expect(out.out.startsWith('# Renamed notes')).toBe(true);
+    expect(out.out).toContain('## Response:\n\nWelcome!');
+    expect(out.out).toContain('## Prompt:\n7/5/2026, 7:43:02 AM · gpt-5-5\n\nA triangle.');
+    expect(out.again.messages.map((m) => m.role)).toEqual(['assistant', 'user']);
+    expect(out.again.title).toBe('Renamed notes');
+    expect(out.out).not.toContain('What is in this picture?');
+  });
+});
+
 describe('markdown transcripts (synthetic)', () => {
   it('keeps CRLF line endings when a turn is changed', () => {
     // Windows checkouts turn line endings into CRLF. The file must come back with the same endings.

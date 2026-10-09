@@ -105,17 +105,44 @@ function uniq(notes: string[]): string[] {
 }
 
 /* ------------------------------------------------------------------ */
-/* Flat arrays: Claude `chat_messages`, generic `messages`             */
+/* Flat arrays: Claude `chat_messages`, generic `messages`, ChatGPT Exporter */
 /* ------------------------------------------------------------------ */
 
-function newFlatItem(format: 'claude' | 'generic', m: Message): Record<string, unknown> {
+/** Role names the ChatGPT Exporter writes ("Prompt" / "Response"). */
+function exporterRoleLabel(role: Role): string {
+  if (role === 'user') return 'Prompt';
+  if (role === 'assistant') return 'Response';
+  return role[0].toUpperCase() + role.slice(1);
+}
+
+/** The "7/5/2026, 7:43:01 AM" timestamp format the ChatGPT Exporter writes. */
+function exporterTime(d: Date): string {
+  return d.toLocaleString('en-US', {
+    month: 'numeric',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
+}
+
+function newFlatItem(format: 'claude' | 'generic' | 'exporter', m: Message): Record<string, unknown> {
   if (format === 'claude') return { sender: m.role === 'user' ? 'human' : m.role, text: m.text };
+  if (format === 'exporter') {
+    return { role: exporterRoleLabel(m.role), model: '', say: m.text, time: exporterTime(new Date()) };
+  }
   return { role: m.role, content: m.text };
 }
 
-function setFlatRole(format: 'claude' | 'generic', item: Record<string, any>, role: Role): void {
+function setFlatRole(format: 'claude' | 'generic' | 'exporter', item: Record<string, any>, role: Role): void {
   if (format === 'claude') {
     item.sender = role === 'user' ? 'human' : role;
+    return;
+  }
+  if (format === 'exporter') {
+    item.role = exporterRoleLabel(role);
     return;
   }
   if ('role' in item) item.role = role;
@@ -126,7 +153,7 @@ function setFlatRole(format: 'claude' | 'generic', item: Record<string, any>, ro
   else item.role = role;
 }
 
-export function flatEditor(format: 'claude' | 'generic', list: any[], refs: Ref[], title: TitleSlot): Editor {
+export function flatEditor(format: 'claude' | 'generic' | 'exporter', list: any[], refs: Ref[], title: TitleSlot): Editor {
   const visible = new Set<unknown>();
   for (const r of refs) if (r.kind === 'item') visible.add(r.item);
 
@@ -530,6 +557,8 @@ export interface MdSection {
   /** The original heading line, kept so unchanged turns are written back verbatim. */
   heading: string;
   role: Role;
+  /** Meta lines between the heading and the body (a timestamp, say), kept when the body is rewritten. */
+  head?: string[];
   /** Every line after the heading, up to the next turn heading. */
   lines: string[];
 }
@@ -540,15 +569,49 @@ export function turnHeading(role: Role): string {
   return '## 🤖 Model';
 }
 
+/** ChatGPT Exporter transcripts use "## Prompt:" / "## Response:" turn headings. */
+export function exporterTurnHeading(role: Role): string {
+  if (role === 'user') return '## Prompt:';
+  if (role === 'reasoning') return '## Reasoning:';
+  return '## Response:';
+}
+
+/** How a markdown transcript writes its turns. */
+export interface MdStyle {
+  /** Heading line for a newly written turn, or when a message's role changes. */
+  turnHeading(role: Role): string;
+  /** Lines written after the text of a newly written turn. */
+  afterNewTurn: string[];
+  /** Note when a role can only be stored as the format's assistant turn. */
+  roleNote: string;
+}
+
+export const aistudioMdStyle: MdStyle = {
+  turnHeading,
+  afterNewTurn: ['', '---', ''],
+  roleNote: 'System, tool and other messages are saved as Model turns in this format.',
+};
+
+export const exporterMdStyle: MdStyle = {
+  turnHeading: exporterTurnHeading,
+  afterNewTurn: [''],
+  roleNote: 'System, tool and other messages are saved as Response turns in this format.',
+};
+
 /** Trailing blank lines and rules after a turn's body, so a rewritten turn keeps its separator. */
 function tailOf(lines: string[]): string[] {
   let last = lines.length - 1;
-  while (last >= 0 && (lines[last].trim() === '' || /^\s*(-{3,}|\*{3,})\s*$/.test(lines[last]))) last -= 1;
+  const isTail = (l: string) =>
+    l.trim() === '' ||
+    /^\s*(-{3,}|\*{3,})\s*$/.test(l) ||
+    /^Powered by \[?ChatGPT Exporter/i.test(l);
+  while (last >= 0 && isTail(lines[last])) last -= 1;
   return lines.slice(last + 1);
 }
 
 /**
  * `eol` is the line ending the file uses (\n or \r\n), so a file keeps its own line endings when written.
+ * `style` says how turns are written; it defaults to the AI Studio heading style.
  */
 export function markdownEditor(
   header: string[],
@@ -556,6 +619,7 @@ export function markdownEditor(
   refs: Ref[],
   original: string,
   eol: '\n' | '\r\n' = '\n',
+  style: MdStyle = aistudioMdStyle,
 ): Editor {
   let output: string | null = null;
   const withEol = (s: string) => (eol === '\n' ? s : s.replace(/\n/g, eol));
@@ -589,10 +653,10 @@ export function markdownEditor(
       for (const m of edit.edited) {
         const i = idx.get(m.id);
         if (m.role !== 'user' && m.role !== 'assistant' && m.role !== 'reasoning') {
-          notes.push('System, tool and other messages are saved as Model turns in this format.');
+          notes.push(style.roleNote);
         }
         if (i === undefined) {
-          out.push(turnHeading(m.role), '', m.text, '', '---', '');
+          out.push(style.turnHeading(m.role), '', m.text, ...style.afterNewTurn);
           continue;
         }
         const ref = refs[i];
@@ -603,8 +667,8 @@ export function markdownEditor(
           out.push(sec.heading, ...sec.lines);
           continue;
         }
-        const heading = m.role === before.role ? sec.heading : turnHeading(m.role);
-        out.push(heading, '', m.text, ...tailOf(sec.lines));
+        const heading = m.role === before.role ? sec.heading : style.turnHeading(m.role);
+        out.push(heading, ...(sec.head ?? []), '', m.text, ...tailOf(sec.lines));
       }
       output = withEol(`${out.join('\n').replace(/\n*$/, '')}\n`);
       return uniq(notes);
