@@ -1,0 +1,72 @@
+# AGENTS.md
+
+Guidance for AI coding agents working in this repository.
+
+## What this project is
+
+`chat-viewer` is a client-side React + TypeScript app (Vite) for reading and editing exported AI chat history. Users open many chats in tabs, edit messages and titles, and export the result as JSON or Markdown. Everything runs in the browser; there is no backend.
+
+## Commands
+
+```bash
+npm install        # install dependencies (package-lock.json is committed; keep it in sync)
+npm run dev        # Vite dev server on 0.0.0.0:5173
+npm test           # vitest run (all *.test.ts / *.test.tsx under src/)
+npm run build      # tsc --noEmit, then vite build into dist/
+npm run preview    # serve the built dist/ on 0.0.0.0:4173
+```
+
+Before you report work as done, run `npm test`, `npx tsc --noEmit`, and `npm run build`. All three must pass.
+
+## Layout
+
+- `src/parse.ts` – chat format detection and adapters: ChatGPT (`mapping` tree), Claude (`chat_messages`), Qwen / Open WebUI-style (`chat.history.messages` tree, follows `currentId` → `parentId`), generic `{messages: [...]}`, JSON Lines, and AI Studio / generic Markdown transcripts (`parseMarkdownChat`).
+- `src/loader.ts` – entry point for opened or dropped files: routes `.zip` (JSZip), images, Markdown and JSON to the right parser.
+- `src/math.ts` – converts `\( … \)` and `\[ … \]` into `$…$` / `$$…$$` before markdown rendering. Code spans and fenced blocks are skipped.
+- `src/assets.tsx` – image registry (`AssetsContext`) and the markdown `<img>` component that resolves relative names like `image-1.jpg` to loaded object URLs.
+- `src/export.ts` – JSON and Markdown export, and the download helper.
+- `src/types.ts` – `Chat`, `Message`, `Role`, `SourceKind`. Keep these in sync with the adapters.
+- `src/App.tsx` – global state: chats, library order, open tabs, active tab, images, errors, theme.
+- `src/components/` – `Sidebar`, `TabBar`, `ChatView` (header, toolbar, message list), `MessageCard` (view and edit modes, markdown, collapsible reasoning and tool output).
+- `src/styles.css` – all styling. Colours come from CSS variables; light values are on `:root`, dark on `:root[data-theme='dark']`.
+- `index.html` – includes a small inline script that sets the theme before first paint.
+- `examples/` – small synthetic input files. Do not put real personal chat data here.
+
+## Conventions
+
+- **TypeScript strict mode** is on, including `noUnusedLocals` and `noUnusedParameters`. Don't silence errors with `@ts-ignore`; fix the types. (One deliberate exception exists: `rehypePlugins` is cast with `as any` in `MessageCard.tsx` because of a react-markdown typing mismatch.)
+- **Parsers must not throw on a bad message.** Skip empty or unknown parts and keep going. Throw only when a whole file cannot be read or recognised, and use a readable message that starts with the file name.
+- **Keep the internal model simple.** Adapters convert any input format into `Message { id, role, text, createdAt? }`. Use `newId()` from `parse.ts` for IDs.
+- **Edits are immutable.** Update chats with spreads (`{ ...chat, messages }`) and set `dirty: true`. `original` is the snapshot used by Revert, so don't mutate it.
+- **Don't call state setters from inside other state updaters.** This has caused bugs under React StrictMode. Compute the next value from the current render's state instead.
+- **Markdown rendering** uses `react-markdown` with `remark-math` and `rehype-katex`. Raw HTML is not enabled. If you add plugins, keep HTML disabled.
+- **Themes:** add colours as variables in both `:root` and `:root[data-theme='dark']`. Don't add hard-coded colours to component rules.
+- **Dependencies:** add them with `npm install --save` / `--save-dev`, and commit the lockfile. Prefer a small library over hand-written code for well-defined formats such as zip.
+
+## Tests
+
+- Tests live next to the code (`src/*.test.ts`, `src/*.test.tsx`). Vitest config is in `vite.config.ts`.
+- `parse.test.ts` covers the ChatGPT, Claude, generic and Markdown adapters. `openwebui.test.ts` covers Qwen / Open WebUI branch handling and includes a smoke test on real exports.
+- `loader.test.ts` builds zip files in memory. `render.test.tsx` and `math.test.tsx` render components with `react-dom/server` and check the markup.
+- When you add a format or fix a parsing bug, add a small synthetic fixture that reproduces it. Don't rely only on the real exports.
+- Tests that read `chat-export-*.json` in the repo root are skipped automatically when those files are absent.
+
+## Data and privacy
+
+- The repo root currently contains real exported chats (`chat-export-*.json`) and an AI Studio zip. These belong to the user. Don't edit, reformat or delete them unless asked.
+- Don't commit new real chat exports, personal documents or screenshots unless the user asks for it. Use synthetic data for tests and examples.
+- Don't log or print message contents in tests or tooling output beyond what a failing assertion needs.
+
+## Git workflow
+
+- Work on the branch `arena/d9db7c55-chat-viewer`. Commit to it and push only to it: `git push origin arena/d9db7c55-chat-viewer`.
+- Keep commits focused, with a short imperative subject line and a body explaining why when it isn't obvious.
+- Run the checks above before committing.
+
+## Known limitations (don't "fix" these without asking)
+
+- Only the active branch of a Qwen / Open WebUI-style tree is shown. Alternative branches are skipped.
+- Images are matched by file name across everything loaded in the session. Names can collide.
+- Image links from exports (for example Qwen CDN links carrying access keys) can expire, and the sandbox has no access to those hosts.
+- Edits live in memory until exported. Nothing is written back to the original files.
+- The production bundle is larger than 500 kB because of KaTeX and JSZip. This is a warning, not an error.
