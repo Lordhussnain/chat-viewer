@@ -1,0 +1,52 @@
+name: Desktop app (Windows)
+
+# Builds the Windows installer and a portable .exe on a Windows runner.
+# Download them from the workflow run's "Artifacts" section on GitHub.
+on:
+  push:
+    branches: [arena/d9db7c55-chat-viewer, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build installer and portable app
+        run: npm run build:desktop
+
+      - name: Check the packaged app renders
+        shell: pwsh
+        env:
+          CHAT_VIEWER_SCREENSHOT: ${{ runner.temp }}/viewer-screenshot.png
+        run: |
+          npx electron . --disable-gpu
+          if (-not (Test-Path $env:CHAT_VIEWER_SCREENSHOT)) {
+            Write-Error "Screenshot was not created: the app did not render."
+            exit 1
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chat-viewer-windows
+          path: |
+            release/*.exe
+            ${{ runner.temp }}/viewer-screenshot.png
+          if-no-files-found: error
+          retention-days: 30
