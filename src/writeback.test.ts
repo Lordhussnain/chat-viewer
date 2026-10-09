@@ -57,6 +57,13 @@ describe('round trip with no edits', () => {
     }
   });
 
+  it.skipIf(!mdName)('keeps CRLF endings on the real transcript', () => {
+    const lf = readFileSync(new URL(mdName!, root), 'utf8');
+    const crlf = lf.replace(/\r?\n/g, '\r\n');
+    const out = edit(mdName!, crlf, (m) => m);
+    expect(out.out.trimEnd()).toBe(crlf.trimEnd());
+  });
+
   it.skipIf(!mdName)('keeps unchanged markdown turns byte for byte', () => {
     const text = readFileSync(new URL(mdName!, root), 'utf8');
     const out = edit(mdName!, text, (m) => m);
@@ -246,6 +253,15 @@ describe('Claude and generic flat exports (synthetic)', () => {
 });
 
 describe('markdown transcripts (synthetic)', () => {
+  it('keeps CRLF line endings when a turn is changed', () => {
+    // Windows checkouts turn line endings into CRLF. The file must come back with the same endings.
+    const crlf = md.replace(/\n/g, '\r\n');
+    const out = edit('talk.md', crlf, (m) => m.map((x, i) => (i === 0 ? { ...x, text: 'Changed question' } : x)));
+    expect(out.out.replace(/\r\n/g, '')).not.toContain('\n');
+    expect(out.again.messages.map((m) => m.text)[0]).toBe('Changed question');
+    expect(out.again.messages.length).toBe(2);
+  });
+
   const md = [
     '# **Title:** Notes on physics',
     '',

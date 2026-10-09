@@ -555,7 +555,8 @@ function markdownDocument(fileName: string, text: string): ChatDocument {
   }
 
   const title = headingTitle || deriveTitle(messages) || fileName.replace(/\.[^.]+$/, '');
-  const editor = markdownEditor(header, sections, refs, text);
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const editor = markdownEditor(header, sections, refs, text, eol);
   const chat: Chat = {
     id: newId('chat'),
     fileName,

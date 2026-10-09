@@ -546,8 +546,18 @@ function tailOf(lines: string[]): string[] {
   return lines.slice(last + 1);
 }
 
-export function markdownEditor(header: string[], sections: MdSection[], refs: Ref[], original: string): Editor {
+/**
+ * `eol` is the line ending the file uses (\n or \r\n), so a file keeps its own line endings when written.
+ */
+export function markdownEditor(
+  header: string[],
+  sections: MdSection[],
+  refs: Ref[],
+  original: string,
+  eol: '\n' | '\r\n' = '\n',
+): Editor {
   let output: string | null = null;
+  const withEol = (s: string) => (eol === '\n' ? s : s.replace(/\n/g, eol));
   return {
     readOnly: null,
     serialize() {
@@ -561,7 +571,7 @@ export function markdownEditor(header: string[], sections: MdSection[], refs: Re
         if (edit.title !== edit.originalTitle) {
           notes.push('A plain markdown note has no title line, so the title was not saved.');
         }
-        output = `${edit.edited.map((m) => m.text).join('\n\n')}\n`;
+        output = withEol(`${edit.edited.map((m) => m.text).join('\n\n')}\n`);
         return uniq(notes);
       }
 
@@ -595,7 +605,7 @@ export function markdownEditor(header: string[], sections: MdSection[], refs: Re
         const heading = m.role === before.role ? sec.heading : turnHeading(m.role);
         out.push(heading, '', m.text, ...tailOf(sec.lines));
       }
-      output = `${out.join('\n').replace(/\n*$/, '')}\n`;
+      output = withEol(`${out.join('\n').replace(/\n*$/, '')}\n`);
       return uniq(notes);
     },
   };
