@@ -1,0 +1,20 @@
+{
+  "conversations": [
+    {
+      "title": "Sample: planning a trip",
+      "createdAt": "2026-01-10T09:00:00Z",
+      "updatedAt": "2026-01-10T09:05:00Z",
+      "messages": [
+        { "role": "user", "text": "Plan a 3-day trip to Murree.", "createdAt": "2026-01-10T09:00:00Z" },
+        { "role": "assistant", "text": "Here is a **3-day plan**:\n\n1. Day 1 – Mall Road and Kashmir Point\n2. Day 2 – Patriata and the chairlift\n3. Day 3 – Ayubia National Park", "createdAt": "2026-01-10T09:01:00Z" }
+      ]
+    },
+    {
+      "title": "Sample: code question",
+      "messages": [
+        { "role": "user", "text": "How do I reverse a list in Python?" },
+        { "role": "assistant", "text": "Use slicing:\n\n```python\nxs = [1, 2, 3]\nprint(xs[::-1])\n```" }
+      ]
+    }
+  ]
+}
