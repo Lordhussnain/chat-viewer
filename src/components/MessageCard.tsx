@@ -4,6 +4,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import type { Message, Role } from '../types';
 import { MarkdownImage } from '../assets';
+import { normalizeMath } from '../math';
 
 const ROLES: Role[] = ['user', 'assistant', 'reasoning', 'system', 'tool', 'other'];
 
@@ -19,7 +20,7 @@ export function Markdown({ children }: { children: string }) {
         rehypePlugins={REHYPE_PLUGINS as any}
         components={MD_COMPONENTS}
       >
-        {children}
+        {normalizeMath(children)}
       </ReactMarkdown>
     </div>
   );
