@@ -4,6 +4,20 @@ A browser-based viewer for exported AI chat history. Open many chats at once in 
 
 ## Run it
 
+### As a Windows desktop app (no terminal needed)
+
+The repo builds a Windows installer and a portable `.exe` automatically on GitHub:
+
+1. Open the repo on GitHub → **Actions** → **Desktop app (Windows)**, and choose the latest successful run.
+2. Under **Artifacts**, download `chat-viewer-windows`. It contains:
+   - `Chat Viewer Setup <version>.exe` – installer; adds a Start menu entry.
+   - `ChatViewer-Portable-<version>.exe` – runs directly, no installation.
+3. Run it. Windows may show "Windows protected your PC" because the app is not code-signed. Click **More info → Run anyway**.
+
+The desktop app is Electron (`electron/main.cjs`). It opens the single-file viewer in its own window, and external links open in your normal browser. Chats are never uploaded. Artifacts are kept for 30 days, and every push to the branch builds new ones.
+
+To try the desktop window locally on a machine with Node.js: `npm install`, then `npm run desktop:run`.
+
 ### As a standalone app file (no terminal needed to use it)
 
 ```bash
