@@ -11,6 +11,8 @@ interface Props {
   imageCount: number;
   errors: string[];
   onDismissErrors: () => void;
+  theme: 'light' | 'dark';
+  onToggleTheme: () => void;
 }
 
 function shortDate(iso?: string): string {
@@ -29,11 +31,23 @@ export function Sidebar({
   imageCount,
   errors,
   onDismissErrors,
+  theme,
+  onToggleTheme,
 }: Props) {
   return (
     <aside className="sidebar">
       <div className="sidebar-head">
-        <h1>Chat Viewer</h1>
+        <div className="sidebar-title">
+          <h1>Chat Viewer</h1>
+          <button
+            className="theme-toggle"
+            onClick={onToggleTheme}
+            aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+          >
+            {theme === 'dark' ? '☀ Light' : '☾ Dark'}
+          </button>
+        </div>
         <label className="button primary file-button">
           Open files
           <input

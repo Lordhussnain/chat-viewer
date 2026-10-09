@@ -6,7 +6,29 @@ import { Sidebar } from './components/Sidebar';
 import { TabBar } from './components/TabBar';
 import { ChatView } from './components/ChatView';
 
+const THEME_KEY = 'chat-viewer-theme';
+
+function initialTheme(): 'light' | 'dark' {
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved === 'light' || saved === 'dark') return saved;
+  } catch {
+    // Storage can be unavailable (e.g. privacy settings); fall back to the system setting.
+  }
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
 export default function App() {
+  const [theme, setTheme] = useState<'light' | 'dark'>(initialTheme);
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore: the choice just won't persist
+    }
+  }, [theme]);
+
   // All loaded chats, keyed by id.
   const [chats, setChats] = useState<Record<string, Chat>>({});
   // Library order (display order is by date, applied below).
@@ -167,6 +189,8 @@ export default function App() {
           imageCount={imageCount}
           errors={errors}
           onDismissErrors={() => setErrors([])}
+          theme={theme}
+          onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
         />
 
         <main className="main">
