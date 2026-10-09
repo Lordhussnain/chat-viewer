@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Chat } from './types';
 import { loadFiles } from './loader';
 import { applyDisplay, loadDisplay, saveDisplay, type DisplaySettings } from './display';
@@ -8,6 +8,15 @@ import { TabBar } from './components/TabBar';
 import { ChatView } from './components/ChatView';
 
 const THEME_KEY = 'chat-viewer-theme';
+const SIDEBAR_KEY = 'chat-viewer-sidebar-collapsed';
+
+function initialSidebarCollapsed(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
 
 function initialTheme(): 'light' | 'dark' {
   try {
@@ -22,6 +31,16 @@ function initialTheme(): 'light' | 'dark' {
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(initialTheme);
   const [display, setDisplay] = useState<DisplaySettings>(loadDisplay);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(initialSidebarCollapsed);
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_KEY, sidebarCollapsed ? '1' : '0');
+    } catch {
+      // ignore: the choice just won't persist
+    }
+  }, [sidebarCollapsed]);
+  // Scroll offset per open chat. A ref, not state: it changes on every scroll and must not re-render.
+  const scrollMemory = useRef(new Map<string, number>()).current;
   useEffect(() => {
     applyDisplay(display);
     saveDisplay(display);
@@ -141,6 +160,7 @@ export default function App() {
 
   /** Remove a tab; if it was active, activate its neighbour. */
   const dropTab = (id: string) => {
+    scrollMemory.delete(id);
     const i = tabIds.indexOf(id);
     const next = tabIds.filter((t) => t !== id);
     setTabIds(next);
@@ -199,6 +219,8 @@ export default function App() {
           onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
           display={display}
           onDisplayChange={(patch) => setDisplay((d) => ({ ...d, ...patch }))}
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={() => setSidebarCollapsed((c) => !c)}
         />
 
         <main className="main">
@@ -210,6 +232,7 @@ export default function App() {
               onEdit={(patch) => editChat(activeChat.id, patch)}
               onRevert={() => revertChat(activeChat.id)}
               onRemove={() => removeChat(activeChat.id)}
+              scrollMemory={scrollMemory}
             />
           ) : (
             <div className="empty">

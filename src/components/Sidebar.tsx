@@ -18,6 +18,8 @@ interface Props {
   onToggleTheme: () => void;
   display: DisplaySettings;
   onDisplayChange: (patch: Partial<DisplaySettings>) => void;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }
 
 function shortDate(iso?: string): string {
@@ -40,11 +42,38 @@ export function Sidebar({
   onToggleTheme,
   display,
   onDisplayChange,
+  collapsed,
+  onToggleCollapsed,
 }: Props) {
+  if (collapsed) {
+    return (
+      <aside className="sidebar collapsed">
+        <button
+          className="collapse-toggle"
+          onClick={onToggleCollapsed}
+          aria-label="Show sidebar"
+          aria-expanded={false}
+          title="Show sidebar"
+        >
+          ☰
+        </button>
+      </aside>
+    );
+  }
+
   return (
     <aside className="sidebar">
       <div className="sidebar-head">
         <div className="sidebar-title">
+          <button
+            className="collapse-toggle"
+            onClick={onToggleCollapsed}
+            aria-label="Hide sidebar"
+            aria-expanded={true}
+            title="Hide sidebar"
+          >
+            ⟨
+          </button>
           <h1>Chat Viewer</h1>
           <button
             className="theme-toggle"

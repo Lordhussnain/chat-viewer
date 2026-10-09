@@ -54,6 +54,7 @@ Before you report work as done, run `npm test`, `npx tsc --noEmit`, and `npm run
 
 - Tests live next to the code (`src/*.test.ts`, `src/*.test.tsx`). Vitest config is in `vite.config.ts`.
 - `parse.test.ts` covers the ChatGPT, Claude, generic and Markdown adapters. `openwebui.test.ts` covers Qwen / Open WebUI branch handling and includes a smoke test on real exports.
+- `ui-behaviour.test.tsx` runs components in jsdom (scroll position per tab, sidebar collapse). Use it for behaviour that depends on the DOM.
 - `loader.test.ts` builds zip files in memory. `render.test.tsx` and `math.test.tsx` render components with `react-dom/server` and check the markup.
 - When you add a format or fix a parsing bug, add a small synthetic fixture that reproduces it. Don't rely only on the real exports.
 - Tests that read `chat-export-*.json` in the repo root are skipped automatically when those files are absent.

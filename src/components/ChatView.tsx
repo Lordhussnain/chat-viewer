@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Chat, Message, Role } from '../types';
 import { MessageCard } from './MessageCard';
 import { chatToJson, chatToMarkdown, downloadText, safeFilename } from '../export';
@@ -10,10 +10,20 @@ interface Props {
   onEdit: (patch: Partial<Pick<Chat, 'title' | 'messages'>>) => void;
   onRevert: () => void;
   onRemove: () => void;
+  /** Scroll offset per chat id, kept by the parent so it survives switching tabs. */
+  scrollMemory: Map<string, number>;
 }
 
-export function ChatView({ chat, onEdit, onRevert, onRemove }: Props) {
+export function ChatView({ chat, onEdit, onRevert, onRemove, scrollMemory }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Go back to where the reader was. This runs before paint, so there is no visible jump.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const saved = scrollMemory.get(chat.id);
+    if (el && saved !== undefined) el.scrollTop = saved;
+  }, [chat.id, scrollMemory]);
   const messages = chat.messages;
 
   const stats = useMemo(() => {
@@ -39,7 +49,11 @@ export function ChatView({ chat, onEdit, onRevert, onRemove }: Props) {
     downloadText(`${safeFilename(chat.title)}.md`, chatToMarkdown(chat), 'text/markdown');
 
   return (
-    <div className="chat-view">
+    <div
+      className="chat-view"
+      ref={scrollRef}
+      onScroll={(e) => scrollMemory.set(chat.id, e.currentTarget.scrollTop)}
+    >
       <div className="chat-header">
         <input
           className="title-input"
