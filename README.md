@@ -4,12 +4,26 @@ A browser-based viewer for exported AI chat history. Open many chats at once in 
 
 ## Run it
 
+### As a standalone app file (no terminal needed to use it)
+
+```bash
+npm install
+npm run build:single   # writes dist-single/chat-viewer.html
+```
+
+Double-click `dist-single/chat-viewer.html` to open the viewer in your browser. The file is self-contained and works offline. Everything you open stays in the browser; nothing is uploaded. To keep it as an app-like window, use your browser's "Install" or "Create shortcut / Open as window" option for the file.
+
+You only need to run `npm run build:single` again when the code changes.
+
+### For development
+
 ```bash
 npm install
 npm run dev        # http://localhost:5173
 npm test           # parser, loader, and rendering tests
 npm run build      # type-check + production build into dist/
 ```
+
 
 ## Using it
 

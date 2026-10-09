@@ -13,6 +13,7 @@ npm install        # install dependencies (package-lock.json is committed; keep 
 npm run dev        # Vite dev server on 0.0.0.0:5173
 npm test           # vitest run (all *.test.ts / *.test.tsx under src/)
 npm run build      # tsc --noEmit, then vite build into dist/
+npm run build:single  # one self-contained dist-single/chat-viewer.html (double-click to open)
 npm run preview    # serve the built dist/ on 0.0.0.0:4173
 ```
 
