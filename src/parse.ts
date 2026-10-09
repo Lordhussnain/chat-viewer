@@ -15,6 +15,7 @@ export function normalizeRole(raw: unknown): Role {
   if (r === 'user' || r === 'human') return 'user';
   if (['assistant', 'ai', 'model', 'bot', 'claude', 'chatgpt'].includes(r)) return 'assistant';
   if (r === 'system') return 'system';
+  if (r === 'reasoning' || r === 'thinking') return 'reasoning';
   if (['tool', 'function', 'ipython', 'tool_result'].includes(r)) return 'tool';
   return 'other';
 }
@@ -245,4 +246,95 @@ export function parseChatFile(fileName: string, text: string): Chat[] {
       dirty: false,
     };
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* Markdown transcripts (e.g. AI Studio "Download as Markdown")        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Turn headings such as "## 👤 User", "## 🤖 Model" and "## 🤖 Model (Reasoning)".
+ * Only exact turn headings match, so ordinary "## Topic" headings stay inside the text.
+ */
+const TURN_HEADING = /^##\s+(?:\S+\s+)?(User|Model)(?:\s*\((Reasoning)\))?\s*$/;
+
+function trimTrailingRules(s: string): string {
+  let out = s.trim();
+  while (/(^|\n)\s*(-{3,}|\*{3,})\s*$/.test(out)) {
+    out = out.replace(/(^|\n)\s*(-{3,}|\*{3,})\s*$/, '').trim();
+  }
+  return out;
+}
+
+/**
+ * Parse a markdown transcript into one chat. Turns are split on turn headings;
+ * image attachments become markdown image links that the viewer resolves against
+ * images loaded alongside the file.
+ */
+export function parseMarkdownChat(fileName: string, text: string): Chat[] {
+  const lines = text.split(/\r?\n/);
+
+  const h1 = lines.find((l) => /^#\s+/.test(l));
+  const headingTitle = h1
+    ?.replace(/^#\s+/, '')
+    .replace(/\*\*/g, '')
+    .replace(/^Title:\s*/i, '')
+    .trim();
+  const exported = /Exported on:\s*(.+)$/m.exec(text)?.[1]?.trim();
+  const exportedIso = exported ? toIso(Date.parse(exported)) : undefined;
+
+  const sections: { role: Role; lines: string[] }[] = [];
+  let current: { role: Role; lines: string[] } | null = null;
+  for (const line of lines) {
+    const m = TURN_HEADING.exec(line);
+    if (m) {
+      const role: Role = m[1] === 'User' ? 'user' : m[2] ? 'reasoning' : 'assistant';
+      current = { role, lines: [] };
+      sections.push(current);
+    } else if (current) {
+      current.lines.push(line);
+    }
+  }
+
+  let messages: Message[];
+  let source: SourceKind;
+  if (sections.length > 0) {
+    source = 'aistudio';
+    messages = [];
+    for (const sec of sections) {
+      let body = sec.lines.join('\n');
+      if (sec.role === 'user') {
+        // Attachment blocks: keep only the image link itself, rendered inline.
+        body = body
+          .replace(/\*\*Image Attachment:\*\*/g, '')
+          .replace(/^\s*File Name:.*$/gm, '')
+          .replace(/^\s*Image:\s*(!\[[^\]]*\]\([^)]*\))/gm, '$1');
+      }
+      body = trimTrailingRules(body);
+      if (!body) continue;
+      messages.push({ id: newId('m'), role: sec.role, text: body });
+    }
+  } else {
+    // No turn headings: treat the whole document as one note.
+    source = 'markdown';
+    messages = text.trim() ? [{ id: newId('m'), role: 'other', text: text.trim() }] : [];
+  }
+
+  if (messages.length === 0) {
+    throw new Error(`${fileName}: no chat content found in markdown`);
+  }
+
+  const title = headingTitle || deriveTitle(messages) || fileName.replace(/\.[^.]+$/, '');
+  return [
+    {
+      id: newId('chat'),
+      fileName,
+      source,
+      title,
+      updatedAt: exportedIso,
+      messages,
+      original: { title, messages },
+      dirty: false,
+    },
+  ];
 }

@@ -3,6 +3,7 @@ import type { Chat, Role } from './types';
 const ROLE_LABEL: Record<Role, string> = {
   user: 'User',
   assistant: 'Assistant',
+  reasoning: 'Reasoning',
   system: 'System',
   tool: 'Tool',
   other: 'Other',

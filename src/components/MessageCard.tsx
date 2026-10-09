@@ -1,8 +1,29 @@
 import { memo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 import type { Message, Role } from '../types';
+import { MarkdownImage } from '../assets';
 
-const ROLES: Role[] = ['user', 'assistant', 'system', 'tool', 'other'];
+const ROLES: Role[] = ['user', 'assistant', 'reasoning', 'system', 'tool', 'other'];
+
+const REMARK_PLUGINS = [remarkMath];
+const REHYPE_PLUGINS = [[rehypeKatex, { throwOnError: false }]] as const;
+const MD_COMPONENTS = { img: MarkdownImage };
+
+export function Markdown({ children }: { children: string }) {
+  return (
+    <div className="md">
+      <ReactMarkdown
+        remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={REHYPE_PLUGINS as any}
+        components={MD_COMPONENTS}
+      >
+        {children}
+      </ReactMarkdown>
+    </div>
+  );
+}
 
 interface Props {
   message: Message;
@@ -22,16 +43,24 @@ function MessageCardImpl(props: Props) {
   if (editing) return <EditForm {...props} />;
 
   const when = message.createdAt ? new Date(message.createdAt).toLocaleString() : '';
-  const body = message.role === 'tool' || message.role === 'system' ? (
-    <details className="collapsible">
-      <summary>{message.role} output ({message.text.length.toLocaleString()} chars)</summary>
-      <pre className="raw">{message.text}</pre>
-    </details>
-  ) : (
-    <div className="md">
-      <ReactMarkdown>{message.text}</ReactMarkdown>
-    </div>
-  );
+  let body;
+  if (message.role === 'tool' || message.role === 'system') {
+    body = (
+      <details className="collapsible">
+        <summary>{message.role} output ({message.text.length.toLocaleString()} chars)</summary>
+        <pre className="raw">{message.text}</pre>
+      </details>
+    );
+  } else if (message.role === 'reasoning') {
+    body = (
+      <details className="collapsible">
+        <summary>Model reasoning ({message.text.length.toLocaleString()} chars)</summary>
+        <Markdown>{message.text}</Markdown>
+      </details>
+    );
+  } else {
+    body = <Markdown>{message.text}</Markdown>;
+  }
 
   return (
     <article className={`msg role-${message.role}`}>
@@ -68,7 +97,7 @@ function EditForm({ message, onSave, onCancelEdit }: Props) {
           ))}
         </select>
         <span className="spacer" />
-        <span className="hint">Ctrl/⌘+Enter to save · Esc to cancel</span>
+        <span className="hint">Ctrl/⌘+Enter to save · Esc to cancel · Markdown and $LaTeX$ supported</span>
       </header>
       <textarea
         autoFocus

@@ -144,6 +144,12 @@ input[type='search'], input[type='text'], select, textarea, .title-input {
 .md table { border-collapse: collapse; display: block; overflow-x: auto; }
 .md th, .md td { border: 1px solid var(--border); padding: 4px 8px; }
 .md blockquote { margin: 0; padding-left: 12px; border-left: 3px solid var(--border); color: var(--muted); }
+.md-img { display: block; max-width: 100%; max-height: 520px; height: auto; margin: 8px 0; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+.missing-img { display: inline-block; color: var(--muted); font-style: italic; font-size: 12px; border: 1px dashed var(--border); border-radius: 4px; padding: 2px 6px; }
+.md .katex-display { overflow-x: auto; overflow-y: hidden; }
+.role-reasoning { background: #f7f5ff; }
+.role-reasoning .role { color: #7a5cc7; }
+.role-reasoning details > .md { margin-top: 8px; color: #3d3550; }
 
 /* Empty + drop */
 .empty { padding: 60px 40px; max-width: 640px; }

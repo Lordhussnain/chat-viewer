@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Chat } from './types';
-import { parseChatFile } from './parse';
+import { loadFiles } from './loader';
+import { AssetsProvider } from './assets';
 import { Sidebar } from './components/Sidebar';
 import { TabBar } from './components/TabBar';
 import { ChatView } from './components/ChatView';
@@ -8,8 +9,10 @@ import { ChatView } from './components/ChatView';
 export default function App() {
   // All loaded chats, keyed by id.
   const [chats, setChats] = useState<Record<string, Chat>>({});
-  // Library order (newest first is applied when rendering).
+  // Library order (display order is by date, applied below).
   const [order, setOrder] = useState<string[]>([]);
+  // Image object URLs, keyed by file name (e.g. "image-1.jpg").
+  const [assets, setAssets] = useState<Record<string, string>>({});
   // Open tabs, in display order.
   const [tabIds, setTabIds] = useState<string[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -60,17 +63,20 @@ export default function App() {
     setActiveId(id);
   }, []);
 
-  const loadFiles = useCallback(
+  const addFiles = useCallback(
     async (files: FileList | File[]) => {
-      const newErrors: string[] = [];
-      const loaded: Chat[] = [];
-      for (const file of Array.from(files)) {
-        try {
-          loaded.push(...parseChatFile(file.name, await file.text()));
-        } catch (e) {
-          newErrors.push((e as Error).message);
-        }
+      const result = await loadFiles(Array.from(files));
+      const newErrors = [...result.errors];
+
+      const newAssets: Record<string, string> = {};
+      for (const [name, blob] of Object.entries(result.images)) {
+        newAssets[name] = URL.createObjectURL(blob);
       }
+      if (Object.keys(newAssets).length) {
+        setAssets((prev) => ({ ...prev, ...newAssets }));
+      }
+
+      const loaded = result.chats;
       if (loaded.length) {
         setChats((prev) => {
           const next = { ...prev };
@@ -131,57 +137,64 @@ export default function App() {
     dropTab(id);
   };
 
+  const imageCount = Object.keys(assets).length;
+
   return (
-    <div
-      className="app"
-      onDragEnter={(e) => {
-        if (e.dataTransfer.types.includes('Files')) setDragging(true);
-      }}
-      onDragOver={(e) => e.preventDefault()}
-      onDragLeave={(e) => {
-        if (e.currentTarget === e.target) setDragging(false);
-      }}
-      onDrop={(e) => {
-        e.preventDefault();
-        setDragging(false);
-        if (e.dataTransfer.files.length) void loadFiles(e.dataTransfer.files);
-      }}
-    >
-      <Sidebar
-        chats={filtered}
-        openIds={openIds}
-        activeId={activeId}
-        query={query}
-        onQuery={setQuery}
-        onOpen={openChat}
-        onPickFiles={(f) => void loadFiles(f)}
-        errors={errors}
-        onDismissErrors={() => setErrors([])}
-      />
+    <AssetsProvider value={assets}>
+      <div
+        className="app"
+        onDragEnter={(e) => {
+          if (e.dataTransfer.types.includes('Files')) setDragging(true);
+        }}
+        onDragOver={(e) => e.preventDefault()}
+        onDragLeave={(e) => {
+          if (e.currentTarget === e.target) setDragging(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          if (e.dataTransfer.files.length) void addFiles(e.dataTransfer.files);
+        }}
+      >
+        <Sidebar
+          chats={filtered}
+          openIds={openIds}
+          activeId={activeId}
+          query={query}
+          onQuery={setQuery}
+          onOpen={openChat}
+          onPickFiles={(f) => void addFiles(f)}
+          imageCount={imageCount}
+          errors={errors}
+          onDismissErrors={() => setErrors([])}
+        />
 
-      <main className="main">
-        <TabBar tabs={tabs} activeId={activeId} onSelect={setActiveId} onClose={closeTab} />
-        {activeChat ? (
-          <ChatView
-            key={activeChat.id}
-            chat={activeChat}
-            onEdit={(patch) => editChat(activeChat.id, patch)}
-            onRevert={() => revertChat(activeChat.id)}
-            onRemove={() => removeChat(activeChat.id)}
-          />
-        ) : (
-          <div className="empty">
-            <h2>No chat open</h2>
-            <p>
-              Open one or more exported chat JSON files (or drop them anywhere on this window), then
-              pick a chat from the list to open it in a tab.
-            </p>
-            {allChats.length > 0 && <p className="muted">{allChats.length} chats loaded — select one on the left.</p>}
-          </div>
-        )}
-      </main>
+        <main className="main">
+          <TabBar tabs={tabs} activeId={activeId} onSelect={setActiveId} onClose={closeTab} />
+          {activeChat ? (
+            <ChatView
+              key={activeChat.id}
+              chat={activeChat}
+              onEdit={(patch) => editChat(activeChat.id, patch)}
+              onRevert={() => revertChat(activeChat.id)}
+              onRemove={() => removeChat(activeChat.id)}
+            />
+          ) : (
+            <div className="empty">
+              <h2>No chat open</h2>
+              <p>
+                Open chat files (JSON, markdown, or a zip export), plus any images they reference. Drop
+                them anywhere on this window, then pick a chat from the list to open it in a tab.
+              </p>
+              {allChats.length > 0 && (
+                <p className="muted">{allChats.length} chats loaded — select one on the left.</p>
+              )}
+            </div>
+          )}
+        </main>
 
-      {dragging && <div className="drop-overlay">Drop JSON files to load chats</div>}
-    </div>
+        {dragging && <div className="drop-overlay">Drop files to load chats and images</div>}
+      </div>
+    </AssetsProvider>
   );
 }

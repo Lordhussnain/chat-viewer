@@ -8,6 +8,7 @@ interface Props {
   onQuery: (q: string) => void;
   onOpen: (id: string) => void;
   onPickFiles: (files: FileList) => void;
+  imageCount: number;
   errors: string[];
   onDismissErrors: () => void;
 }
@@ -25,6 +26,7 @@ export function Sidebar({
   onQuery,
   onOpen,
   onPickFiles,
+  imageCount,
   errors,
   onDismissErrors,
 }: Props) {
@@ -33,11 +35,11 @@ export function Sidebar({
       <div className="sidebar-head">
         <h1>Chat Viewer</h1>
         <label className="button primary file-button">
-          Open JSON files
+          Open files
           <input
             type="file"
             multiple
-            accept=".json,.jsonl,application/json"
+            accept=".json,.jsonl,.md,.markdown,.txt,.zip,image/*,application/json"
             onChange={(e) => {
               if (e.target.files?.length) onPickFiles(e.target.files);
               e.target.value = '';
@@ -53,6 +55,7 @@ export function Sidebar({
         />
         <div className="count">
           {chats.length} chat{chats.length === 1 ? '' : 's'}
+          {imageCount > 0 && ` · ${imageCount} image${imageCount === 1 ? '' : 's'} loaded`}
         </div>
       </div>
 
@@ -84,7 +87,7 @@ export function Sidebar({
         ))}
       </ul>
       {chats.length === 0 && (
-        <p className="muted pad">Open one or more exported chat .json files to begin.</p>
+        <p className="muted pad">Open chat files (JSON, markdown, or zip) and their images to begin.</p>
       )}
     </aside>
   );

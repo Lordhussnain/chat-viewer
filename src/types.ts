@@ -1,6 +1,6 @@
-export type Role = 'user' | 'assistant' | 'system' | 'tool' | 'other';
+export type Role = 'user' | 'assistant' | 'reasoning' | 'system' | 'tool' | 'other';
 
-export type SourceKind = 'chatgpt' | 'claude' | 'generic';
+export type SourceKind = 'chatgpt' | 'claude' | 'generic' | 'aistudio' | 'markdown';
 
 export interface Message {
   id: string;
