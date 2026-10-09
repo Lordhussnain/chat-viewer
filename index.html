@@ -13,6 +13,12 @@
             t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
           }
           document.documentElement.dataset.theme = t;
+          // Text size and zoom (see src/display.ts).
+          var d = JSON.parse(localStorage.getItem('chat-viewer-display') || 'null');
+          if (d && typeof d.textScale === 'number' && typeof d.zoom === 'number') {
+            document.documentElement.style.fontSize = d.textScale * 100 + '%';
+            document.documentElement.style.setProperty('--ui-zoom', String(d.zoom));
+          }
         } catch (e) {}
       })();
     </script>

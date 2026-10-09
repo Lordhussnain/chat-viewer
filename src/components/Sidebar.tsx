@@ -1,4 +1,7 @@
 import type { Chat } from '../types';
+import { TEXT_SCALES, ZOOM_LEVELS, type DisplaySettings } from '../display';
+
+const pct = (n: number) => `${Math.round(n * 100)}%`;
 
 interface Props {
   chats: Chat[];
@@ -13,6 +16,8 @@ interface Props {
   onDismissErrors: () => void;
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
+  display: DisplaySettings;
+  onDisplayChange: (patch: Partial<DisplaySettings>) => void;
 }
 
 function shortDate(iso?: string): string {
@@ -33,6 +38,8 @@ export function Sidebar({
   onDismissErrors,
   theme,
   onToggleTheme,
+  display,
+  onDisplayChange,
 }: Props) {
   return (
     <aside className="sidebar">
@@ -47,6 +54,30 @@ export function Sidebar({
           >
             {theme === 'dark' ? '☀ Light' : '☾ Dark'}
           </button>
+        </div>
+        <div className="display-settings">
+          <label>
+            Text size
+            <select
+              value={display.textScale}
+              onChange={(e) => onDisplayChange({ textScale: Number(e.target.value) })}
+            >
+              {TEXT_SCALES.map((s) => (
+                <option key={s} value={s}>{pct(s)}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Zoom
+            <select
+              value={display.zoom}
+              onChange={(e) => onDisplayChange({ zoom: Number(e.target.value) })}
+            >
+              {ZOOM_LEVELS.map((z) => (
+                <option key={z} value={z}>{pct(z)}</option>
+              ))}
+            </select>
+          </label>
         </div>
         <label className="button primary file-button">
           Open files

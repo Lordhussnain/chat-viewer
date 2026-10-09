@@ -41,6 +41,7 @@ Before you report work as done, run `npm test`, `npx tsc --noEmit`, and `npm run
 - **Don't call state setters from inside other state updaters.** This has caused bugs under React StrictMode. Compute the next value from the current render's state instead.
 - **Markdown rendering** uses `react-markdown` with `remark-math` and `rehype-katex`. Raw HTML is not enabled. If you add plugins, keep HTML disabled.
 - **Themes:** add colours as variables in both `:root` and `:root[data-theme='dark']`. Don't add hard-coded colours to component rules.
+- **Sizes are `rem`, not `px`:** the Text size setting scales the root font size, so any `px` font size or layout width won't scale with it. Borders may stay in `px`. Settings live in `src/display.ts` (text size and zoom, saved to `localStorage`). Zoom works through the `--ui-zoom` variable, which `.app` uses to compensate its width and height.
 - **Dependencies:** add them with `npm install --save` / `--save-dev`, and commit the lockfile. Prefer a small library over hand-written code for well-defined formats such as zip.
 
 ## Tests

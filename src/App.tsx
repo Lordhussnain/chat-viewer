@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Chat } from './types';
 import { loadFiles } from './loader';
+import { applyDisplay, loadDisplay, saveDisplay, type DisplaySettings } from './display';
 import { AssetsProvider } from './assets';
 import { Sidebar } from './components/Sidebar';
 import { TabBar } from './components/TabBar';
@@ -20,6 +21,11 @@ function initialTheme(): 'light' | 'dark' {
 
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(initialTheme);
+  const [display, setDisplay] = useState<DisplaySettings>(loadDisplay);
+  useEffect(() => {
+    applyDisplay(display);
+    saveDisplay(display);
+  }, [display]);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     try {
@@ -191,6 +197,8 @@ export default function App() {
           onDismissErrors={() => setErrors([])}
           theme={theme}
           onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+          display={display}
+          onDisplayChange={(patch) => setDisplay((d) => ({ ...d, ...patch }))}
         />
 
         <main className="main">
